@@ -110,6 +110,11 @@ function routePost(action, b) {
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);
 
+    // Groups (ability-grouping / differentiation)
+    case 'saveGroup':       requireRole(b.token, WRITERS); return saveGroup(b);
+    case 'assignGroup':     requireRole(b.token, WRITERS); return assignGroup(b.studentIds, b.groupId);
+    case 'deleteGroup':     requireRole(b.token, WRITERS); return deleteGroup(b.groupId);
+
     // QR splitter + control panel
     case 'generateQRBatch': requireRole(b.token, WRITERS); return generateQRBatch(b);
     case 'updateQR':        requireRole(b.token, WRITERS); return updateQR(b);

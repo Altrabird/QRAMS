@@ -679,6 +679,41 @@ function duplicateTask(taskId) {
 function listStudents() { return readAll(SHEETS.STUDENTS); }
 function listGroups() { return readAll(SHEETS.GROUPS); }
 
+/** Create or rename a group (used for ability-grouping / differentiation). */
+function saveGroup(payload) {
+  var common = { name: clean(payload.name), className: clean(payload.className), notes: clean(payload.notes) };
+  if (!common.name) throw new Error('Group name is required.');
+  if (payload.groupId) return updateWhere(SHEETS.GROUPS, 'groupId', payload.groupId, common);
+  var ids = readAll(SHEETS.GROUPS).map(function (g) { return g.groupId; });
+  common.groupId = nextId('GRP', ids);
+  common.memberIds = '';
+  common.createdAt = nowIso();
+  appendRow(SHEETS.GROUPS, common);
+  return common;
+}
+
+/** Put one or many students into a group (groupId '' = remove from group). */
+function assignGroup(studentIds, groupId) {
+  if (!studentIds || !studentIds.length) throw new Error('No students selected.');
+  var gid = clean(groupId);
+  var n = 0;
+  studentIds.forEach(function (sid) {
+    if (updateWhere(SHEETS.STUDENTS, 'studentId', clean(sid), { groupId: gid })) n++;
+  });
+  invalidateDashboard();
+  return { assigned: n, groupId: gid };
+}
+
+/** Delete a group; its members simply become ungrouped. */
+function deleteGroup(groupId) {
+  if (!findOne(SHEETS.GROUPS, 'groupId', groupId)) throw new Error('Group not found.');
+  readAll(SHEETS.STUDENTS).forEach(function (s) {
+    if (String(s.groupId) === String(groupId)) updateWhere(SHEETS.STUDENTS, 'studentId', s.studentId, { groupId: '' });
+  });
+  deleteWhere(SHEETS.GROUPS, 'groupId', groupId);
+  return { deleted: groupId };
+}
+
 /**
  * Bulk import students. Accepts an array of {name, studentId?, className, group?,
  * gender?, notes?}. Auto-generates studentId when missing. De-dupes by id.
@@ -770,13 +805,12 @@ function resolveTargets(payload) {
     });
   }
   if (type === 'group') {
-    var groups = listGroups();
-    var byG = {};
-    groups.forEach(function (g) { byG[g.groupId] = g; });
-    return (payload.entityIds || []).map(function (id) {
-      var g = byG[id] || {};
-      return { entityType: 'group', entityId: id, label: g.name || id, className: g.className || '' };
-    });
+    // Generate one QR PER STUDENT in the group (individual tracking, by ability group).
+    return students
+      .filter(function (s) { return payload.groupId && String(s.groupId) === String(payload.groupId); })
+      .map(function (s) {
+        return { entityType: 'student', entityId: s.studentId, label: s.name, className: s.className || '' };
+      });
   }
   // custom: free-text labels become their own entities
   return (payload.labels || []).map(function (label, i) {
@@ -1863,6 +1897,11 @@ function routePost(action, b) {
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);
+
+    // Groups (ability-grouping / differentiation)
+    case 'saveGroup':       requireRole(b.token, WRITERS); return saveGroup(b);
+    case 'assignGroup':     requireRole(b.token, WRITERS); return assignGroup(b.studentIds, b.groupId);
+    case 'deleteGroup':     requireRole(b.token, WRITERS); return deleteGroup(b.groupId);
 
     // QR splitter + control panel
     case 'generateQRBatch': requireRole(b.token, WRITERS); return generateQRBatch(b);

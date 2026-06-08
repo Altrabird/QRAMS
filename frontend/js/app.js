@@ -321,8 +321,8 @@ let _genTask = null, _genStudents = [];
 async function renderGenerator(preselectTaskId) {
   UI.loading('Loading generator…');
   try {
-    const [tasks, students] = await Promise.all([Api.listTasks(), Api.listStudents()]);
-    _tasksCache = tasks; _genStudents = students;
+    const [tasks, students, groups] = await Promise.all([Api.listTasks(), Api.listStudents(), Api.listGroups()]);
+    _tasksCache = tasks; _genStudents = students; _groupsCache = groups;
     const taskId = preselectTaskId || (tasks[0] && tasks[0].taskId) || '';
     const classes = [...new Set(students.map(s => s.className).filter(Boolean))];
     UI.view().innerHTML = `
@@ -336,6 +336,7 @@ async function renderGenerator(preselectTaskId) {
             <div class="section-head"><h2>2 · Choose owners</h2></div>
             <select class="form-select mb-2" id="genType">
               <option value="class">Whole class</option>
+              <option value="group">Students in a group</option>
               <option value="student">Selected students</option>
               <option value="custom">Custom labels</option>
             </select>
@@ -367,6 +368,8 @@ async function renderGenerator(preselectTaskId) {
       const area = UI.el('genTargetArea');
       if (type === 'class') {
         area.innerHTML = `<select class="form-select" id="genClass">${classes.map(c => `<option>${UI.esc(c)}</option>`).join('') || '<option disabled>No classes — import students first</option>'}</select>`;
+      } else if (type === 'group') {
+        area.innerHTML = `<select class="form-select" id="genGroup">${groups.length ? groups.map(g => `<option value="${UI.esc(g.groupId)}">${UI.esc(g.name)}</option>`).join('') : '<option value="" disabled>No groups — create them on the Students page</option>'}</select>`;
       } else if (type === 'student') {
         area.innerHTML = `<div class="border rounded p-2" style="max-height:220px;overflow:auto">${
           students.map(s => `<label class="d-block small"><input type="checkbox" class="form-check-input me-2 genStu" value="${UI.esc(s.studentId)}">${UI.esc(s.name)} <span class="text-secondary">${UI.esc(s.className)}</span></label>`).join('') || '<span class="text-secondary small">No students yet.</span>'}</div>`;
@@ -408,10 +411,11 @@ async function doGenerate() {
   const type = UI.el('genType').value;
   const payload = { taskId, entityType: type };
   if (type === 'class') payload.className = UI.el('genClass')?.value;
+  else if (type === 'group') payload.groupId = UI.el('genGroup')?.value;
   else if (type === 'student') payload.entityIds = [...document.querySelectorAll('.genStu:checked')].map(c => c.value);
   else payload.labels = (UI.el('genCustom')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
 
-  if ((type === 'student' && !payload.entityIds.length) || (type === 'custom' && !payload.labels.length) || (type === 'class' && !payload.className))
+  if ((type === 'student' && !payload.entityIds.length) || (type === 'custom' && !payload.labels.length) || (type === 'class' && !payload.className) || (type === 'group' && !payload.groupId))
     return UI.toast('Pick at least one owner.', 'warning');
 
   const btn = UI.el('genBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
@@ -423,37 +427,86 @@ async function doGenerate() {
   finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic me-1"></i>Generate QR codes'; }
 }
 
-/* ========================= STUDENTS ========================= */
-let _studentsCache = [];
+/* ========================= STUDENTS & GROUPS ========================= */
+let _studentsCache = [], _groupsCache = [];
+
+/* <option> list of groups, with the given one pre-selected. */
+function groupOptions(selected) {
+  return `<option value="">— No group —</option>` +
+    _groupsCache.map(g => `<option value="${UI.esc(g.groupId)}"${g.groupId === selected ? ' selected' : ''}>${UI.esc(g.name)}</option>`).join('');
+}
+
 async function renderStudents() {
   UI.loading('Loading students…');
   try {
-    const students = await Api.listStudents();
-    _studentsCache = students;
+    const [students, groups] = await Promise.all([Api.listStudents(), Api.listGroups()]);
+    _studentsCache = students; _groupsCache = groups;
+    const count = {}; students.forEach(s => { if (s.groupId) count[s.groupId] = (count[s.groupId] || 0) + 1; });
+
     UI.view().innerHTML = `
-      <div class="section-head"><h2>Students</h2>
-        <span class="badge text-bg-light">${students.length}</span>
-        <a class="btn btn-outline-secondary btn-sm ms-auto" href="#/import"><i class="bi bi-upload me-1"></i>Bulk import</a>
+      <div class="section-head"><h2>Students</h2><span class="badge text-bg-light">${students.length}</span>
+        <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="groupModal()"><i class="bi bi-collection me-1"></i>New Group</button>
+        <a class="btn btn-outline-secondary btn-sm" href="#/import"><i class="bi bi-upload me-1"></i>Bulk import</a>
         <button class="btn btn-primary btn-sm" onclick="studentModal()"><i class="bi bi-plus-lg me-1"></i>Add</button></div>
-      ${students.length ? `<div class="card"><div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Group</th><th class="text-end">Actions</th></tr></thead>
-        <tbody>${students.map(s => `<tr><td class="small text-secondary">${UI.esc(s.studentId)}</td>
-          <td class="fw-semibold">${UI.esc(s.name)}</td><td>${UI.esc(s.className)}</td><td>${UI.esc(s.groupId)}</td>
-          <td class="text-end"><button class="btn btn-sm btn-outline-danger" onclick="delStudent('${UI.esc(s.studentId)}')" title="Delete"><i class="bi bi-trash"></i></button></td></tr>`).join('')}</tbody>
-        </table></div></div>`
+
+      <div class="card p-3 mb-3">
+        <div class="d-flex align-items-center flex-wrap gap-2">
+          <span class="small fw-semibold me-1"><i class="bi bi-people me-1"></i>Groups</span>
+          ${groups.length ? groups.map(g => `<span class="badge-chip cursor-pointer" title="Edit group" onclick="groupModal('${UI.esc(g.groupId)}')">${UI.esc(g.name)} <span class="badge text-bg-light">${count[g.groupId] || 0}</span></span>`).join('')
+            : '<span class="small text-secondary">No groups yet — create one to give different tasks to different ability levels.</span>'}
+        </div>
+      </div>
+
+      ${students.length ? `<div class="card">
+        <div class="p-2 px-3 border-bottom d-flex align-items-center gap-2 flex-wrap">
+          <span class="small text-secondary"><b id="selCount">0</b> selected</span>
+          <select class="form-select form-select-sm" id="bulkGroup" style="max-width:210px">${groupOptions('')}</select>
+          <button class="btn btn-sm btn-primary" id="bulkAssignBtn"><i class="bi bi-people-fill me-1"></i>Assign selected</button>
+        </div>
+        <div class="table-responsive"><table class="table table-hover align-middle mb-0">
+          <thead><tr><th style="width:34px"><input type="checkbox" class="form-check-input" id="selAll" title="Select all"></th>
+            <th>Name</th><th>Class</th><th style="min-width:150px">Group</th><th class="text-end">Actions</th></tr></thead>
+          <tbody>${students.map(s => `<tr>
+            <td><input type="checkbox" class="form-check-input selStu" value="${UI.esc(s.studentId)}"></td>
+            <td><div class="fw-semibold">${UI.esc(s.name)}</div><div class="small text-secondary">${UI.esc(s.studentId)}</div></td>
+            <td>${UI.esc(s.className)}</td>
+            <td><select class="form-select form-select-sm rowGroup" data-id="${UI.esc(s.studentId)}">${groupOptions(s.groupId)}</select></td>
+            <td class="text-end"><button class="btn btn-sm btn-outline-danger" onclick="delStudent('${UI.esc(s.studentId)}')" title="Delete"><i class="bi bi-trash"></i></button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>`
       : UI.emptyState('people', 'No students', 'Add students individually or import a CSV.',
           `<a class="btn btn-primary btn-sm" href="#/import">Bulk import</a>`)}`;
+
+    // Selection helpers
+    const updateCount = () => { const n = document.querySelectorAll('.selStu:checked').length; const el = UI.el('selCount'); if (el) el.textContent = n; };
+    document.querySelectorAll('.selStu').forEach(cb => cb.onchange = updateCount);
+    if (UI.el('selAll')) UI.el('selAll').onchange = (e) => { document.querySelectorAll('.selStu').forEach(cb => { cb.checked = e.target.checked; }); updateCount(); };
+
+    // Single assign (per-row dropdown)
+    document.querySelectorAll('.rowGroup').forEach(sel => sel.onchange = async (e) => {
+      try { await Api.assignGroup([e.target.dataset.id], e.target.value); UI.toast('Group updated.'); renderStudents(); }
+      catch (err) { UI.toast(err.message, 'danger'); }
+    });
+
+    // Bulk assign (checked rows -> chosen group)
+    if (UI.el('bulkAssignBtn')) UI.el('bulkAssignBtn').onclick = async () => {
+      const ids = [...document.querySelectorAll('.selStu:checked')].map(c => c.value);
+      if (!ids.length) return UI.toast('Tick at least one student first.', 'warning');
+      try { const r = await Api.assignGroup(ids, UI.el('bulkGroup').value); UI.toast(`Assigned ${r.assigned} student(s).`); renderStudents(); }
+      catch (err) { UI.toast(err.message, 'danger'); }
+    };
   } catch (err) { UI.error(err.message); }
 }
+
+/* Add a student — just name + class; the ID is generated automatically. */
 function studentModal() {
   UI.modal(`<div class="modal-header"><h5 class="modal-title">Add student</h5>
       <button class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><form id="stuForm" class="row g-3">
       <div class="col-md-7"><label class="form-label small fw-semibold">Name *</label><input class="form-control" name="name" required></div>
-      <div class="col-md-5"><label class="form-label small fw-semibold">Class</label><input class="form-control" name="className"></div>
-      <div class="col-md-6"><label class="form-label small fw-semibold">Student ID (optional)</label><input class="form-control" name="studentId" placeholder="auto"></div>
-      <div class="col-md-6"><label class="form-label small fw-semibold">Group</label><input class="form-control" name="group"></div>
-    </form></div>
+      <div class="col-md-5"><label class="form-label small fw-semibold">Class</label><input class="form-control" name="className" placeholder="e.g. 3 Cerdik"></div>
+    </form><p class="small text-secondary mt-2 mb-0">An ID is assigned automatically. Put students into groups afterwards from the table.</p></div>
     <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
       <button class="btn btn-primary" id="saveStuBtn">Add</button></div>`);
   UI.el('saveStuBtn').onclick = async () => {
@@ -462,6 +515,35 @@ function studentModal() {
     try { await Api.importStudents([row]); UI.closeModal(); UI.toast('Student added.'); renderStudents(); }
     catch (err) { UI.toast(err.message, 'danger'); }
   };
+}
+
+/* Create / rename / delete a group. */
+function groupModal(id) {
+  const g = id ? (_groupsCache.find(x => x.groupId === id) || {}) : {};
+  const classes = [...new Set(_studentsCache.map(s => s.className).filter(Boolean))];
+  UI.modal(`<div class="modal-header"><h5 class="modal-title">${id ? 'Edit' : 'New'} Group</h5>
+      <button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><form id="grpForm" class="row g-3">
+      <div class="col-12"><label class="form-label small fw-semibold">Group name *</label>
+        <input class="form-control" name="name" value="${UI.esc(g.name)}" placeholder="e.g. Advanced, Support, Group A" required></div>
+      <div class="col-12"><label class="form-label small fw-semibold">Class (optional)</label>
+        <input class="form-control" name="className" list="grpClasses" value="${UI.esc(g.className)}">
+        <datalist id="grpClasses">${classes.map(c => `<option value="${UI.esc(c)}">`).join('')}</datalist></div>
+    </form><p class="small text-secondary mt-2 mb-0">Groups let you give different-level tasks to different abilities. Assign students from the table (single dropdown or tick + bulk).</p></div>
+    <div class="modal-footer">${id ? `<button class="btn btn-outline-danger me-auto" onclick="delGroup('${UI.esc(id)}')"><i class="bi bi-trash me-1"></i>Delete</button>` : ''}
+      <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-primary" id="saveGrpBtn">Save</button></div>`);
+  UI.el('saveGrpBtn').onclick = async () => {
+    const f = UI.el('grpForm'); if (!f.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(f).entries()); if (id) payload.groupId = id;
+    try { await Api.saveGroup(payload); UI.closeModal(); UI.toast('Group saved.'); renderStudents(); }
+    catch (err) { UI.toast(err.message, 'danger'); }
+  };
+}
+async function delGroup(id) {
+  if (!confirm('Delete this group?\n\nStudents in it simply become ungrouped (they are not deleted).')) return;
+  try { await Api.deleteGroup(id); UI.closeModal(); UI.toast('Group deleted.'); renderStudents(); }
+  catch (e) { UI.toast(e.message, 'danger'); }
 }
 
 /* ========================= BULK IMPORT ========================= */
