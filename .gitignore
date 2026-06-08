@@ -1,0 +1,20 @@
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Logs / temp
+*.log
+tmp/
+
+# Node (not used yet, here for safety if you add tooling later)
+node_modules/
+
+# Local Apps Script clasp credentials (NEVER commit these)
+.clasp.json
+.clasprc.json

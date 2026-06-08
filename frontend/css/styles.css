@@ -1,0 +1,124 @@
+/* =============================================================================
+   QRAMS styles — layered on top of Bootstrap 5.
+   Theme switches via <html data-bs-theme="light|dark"> (Bootstrap native).
+   Custom tokens below add the "premium" sidebar/topbar shell + brand color.
+   ============================================================================= */
+
+:root {
+  --brand: #0ea5e9;
+  --brand-2: #6366f1;
+  --sidebar-w: 248px;
+  --radius: 14px;
+}
+:root,[data-bs-theme="light"]{
+  --app-bg:#f1f5f9; --surface:#ffffff; --surface-2:#f8fafc;
+  --line:#e2e8f0; --side-bg:#0f172a; --side-fg:#cbd5e1; --side-active:#1e293b;
+}
+[data-bs-theme="dark"]{
+  --app-bg:#0b1120; --surface:#111827; --surface-2:#0f172a;
+  --line:#1f2937; --side-bg:#0a0f1d; --side-fg:#94a3b8; --side-active:#1e293b;
+  --bs-body-bg:#0b1120;
+}
+
+body{ background:var(--app-bg); }
+
+/* ---------- Brand badge ---------- */
+.brand-badge{
+  width:54px;height:54px;border-radius:16px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));
+  color:#fff;font-size:1.6rem;box-shadow:0 8px 24px rgba(14,165,233,.35);
+}
+.brand-badge.sm{ width:34px;height:34px;border-radius:10px;font-size:1rem;box-shadow:none; }
+
+/* Real logo image (login hero + sidebar) */
+.brand-img{ width:120px;height:120px;border-radius:26px;box-shadow:0 12px 34px rgba(14,165,233,.32); }
+.brand-img-sm{ width:34px;height:34px;border-radius:9px;display:block; }
+
+/* ---------- Login ---------- */
+.login-wrap{ min-height:100vh;display:grid;place-items:center;padding:20px;
+  background:radial-gradient(1200px 600px at 50% -10%, rgba(99,102,241,.18), transparent),var(--app-bg); }
+.login-card{ width:100%;max-width:410px;border:0;border-radius:var(--radius); }
+
+/* ---------- App shell ---------- */
+.sidebar{
+  position:fixed;inset:0 auto 0 0;width:var(--sidebar-w);background:var(--side-bg);
+  color:var(--side-fg);display:flex;flex-direction:column;z-index:1040;
+  transition:transform .22s ease;
+}
+.sidebar-brand{ display:flex;align-items:center;gap:10px;padding:18px 18px;color:#fff;font-weight:700;font-size:1.1rem; }
+.sidebar-nav{ display:flex;flex-direction:column;gap:2px;padding:8px 10px;flex:1;overflow-y:auto; }
+.sidebar-nav a{
+  display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:10px;
+  color:var(--side-fg);text-decoration:none;font-size:.94rem;font-weight:500;
+}
+.sidebar-nav a i{ font-size:1.1rem;width:20px;text-align:center; }
+.sidebar-nav a:hover{ background:rgba(255,255,255,.06);color:#fff; }
+.sidebar-nav a.active{ background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff; }
+.sidebar-foot{ padding:12px 0; }
+.sidebar-backdrop{ display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1035; }
+
+.main{ margin-left:var(--sidebar-w);min-height:100vh;display:flex;flex-direction:column; }
+.topbar{
+  position:sticky;top:0;z-index:1020;display:flex;align-items:center;gap:10px;
+  padding:12px 18px;background:color-mix(in srgb,var(--surface) 88%, transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+}
+.topbar-title{ font-weight:700;font-size:1.05rem; }
+.content{ padding:20px;max-width:1280px;width:100%;margin:0 auto;flex:1; }
+
+.btn-ghost{ background:transparent;border:1px solid transparent;color:var(--bs-body-color); }
+.btn-ghost:hover{ background:var(--surface-2);border-color:var(--line); }
+
+/* ---------- Cards ---------- */
+.card{ border:1px solid var(--line);border-radius:var(--radius);background:var(--surface); }
+.stat-card{ padding:18px 20px;display:flex;flex-direction:column;gap:6px;height:100%; }
+.stat-card .stat-icon{ width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-size:1.2rem; }
+.stat-card .stat-value{ font-size:1.9rem;font-weight:800;line-height:1; }
+.stat-card .stat-label{ color:var(--bs-secondary-color);font-size:.85rem;font-weight:500; }
+.tint-blue{ background:rgba(14,165,233,.12);color:#0ea5e9; }
+.tint-green{ background:rgba(16,185,129,.12);color:#10b981; }
+.tint-amber{ background:rgba(245,158,11,.14);color:#f59e0b; }
+.tint-violet{ background:rgba(99,102,241,.14);color:#6366f1; }
+.tint-rose{ background:rgba(244,63,94,.12);color:#f43f5e; }
+
+.section-head{ display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px; }
+.section-head h2{ font-size:1.15rem;font-weight:700;margin:0; }
+
+/* ---------- QR cards (print) ---------- */
+.qr-card{
+  border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center;
+  background:#fff;color:#0f172a;break-inside:avoid;
+}
+.qr-card canvas,.qr-card img{ width:100%;max-width:170px;height:auto; }
+.qr-card .qr-name{ font-weight:700;margin-top:8px;font-size:.95rem; }
+.qr-card .qr-meta{ font-size:.78rem;color:#475569; }
+.qr-grid{ display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+
+/* progress + status pills */
+.pill{ font-size:.72rem;padding:.18rem .55rem;border-radius:999px;font-weight:600; }
+.pill-done{ background:rgba(16,185,129,.15);color:#059669; }
+.pill-prog{ background:rgba(245,158,11,.16);color:#d97706; }
+.pill-none{ background:rgba(100,116,139,.16);color:#64748b; }
+
+.empty{ text-align:center;padding:48px 20px;color:var(--bs-secondary-color); }
+.empty i{ font-size:2.4rem;opacity:.5; }
+.table-sm td,.table-sm th{ vertical-align:middle; }
+.cursor-pointer{ cursor:pointer; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 991.98px){
+  .sidebar{ transform:translateX(-100%); }
+  .sidebar.open{ transform:translateX(0); }
+  .sidebar.open ~ .sidebar-backdrop{ display:block; }
+  .main{ margin-left:0; }
+}
+
+/* ---------- Print: only QR sheet shows ---------- */
+@media print{
+  .sidebar,.topbar,.sidebar-backdrop,.no-print{ display:none !important; }
+  .main{ margin:0; }
+  .content{ padding:0;max-width:none; }
+  .qr-grid{ grid-template-columns:repeat(3,1fr); }
+  body{ background:#fff; }
+}
+@page{ size:A4;margin:12mm; }
