@@ -55,6 +55,11 @@ function applyValidation(book) {
   addDropdown(book, SHEETS.TASKS, 'completionMode', ENUMS.completionMode);
   addDropdown(book, SHEETS.QR_CODES, 'status', ENUMS.qrStatus);
   addDropdown(book, SHEETS.QR_CODES, 'progress', ENUMS.progress);
+  // Phase 2 columns
+  addDropdown(book, SHEETS.REWARDS, 'type', ENUMS.rewardType);
+  addDropdown(book, SHEETS.REWARDS, 'status', ENUMS.rewardStatus);
+  addDropdown(book, SHEETS.CERTIFICATES, 'scope', ENUMS.certScope);
+  addDropdown(book, SHEETS.CERTIFICATES, 'status', ENUMS.certStatus);
 }
 
 function addDropdown(book, sheetName, colName, values) {
@@ -127,6 +132,27 @@ function seedSampleData() {
     appendRows(SHEETS.QR_CODES, qrs);
   }
 
+  // ---- Phase 2 seeds ----------------------------------------------------
+  // A handful of starter badges. The `criteria` text is read by checkBadges().
+  if (readAll(SHEETS.BADGES).length === 0) {
+    appendRows(SHEETS.BADGES, [
+      { badgeId: 'B001', name: 'First Steps',       description: 'Scanned your very first task.',     icon: '🌟', criteria: 'first_scan',       createdAt: nowIso() },
+      { badgeId: 'B002', name: 'Getting Going',     description: 'Completed 3 tasks.',                icon: '🏅', criteria: 'tasks:3',          createdAt: nowIso() },
+      { badgeId: 'B003', name: 'High Five',         description: 'Completed 5 tasks.',                icon: '🎖️', criteria: 'tasks:5',          createdAt: nowIso() },
+      { badgeId: 'B004', name: 'Century Club',      description: 'Earned 100 points.',               icon: '💯', criteria: 'points:100',       createdAt: nowIso() },
+      { badgeId: 'B005', name: 'Campaign Champion', description: 'Finished every task in a campaign.', icon: '👑', criteria: 'perfect_campaign', createdAt: nowIso() },
+    ]);
+  }
+
+  // A few sample rewards pupils can redeem with points (only shown if gamification is ON).
+  if (readAll(SHEETS.REWARDS).length === 0) {
+    appendRows(SHEETS.REWARDS, [
+      { rewardId: 'R001', name: 'Homework Pass', description: 'Skip one homework.',               cost: 100, type: 'privilege',   status: 'Active', createdAt: nowIso() },
+      { rewardId: 'R002', name: 'Class Helper',  description: "Be the teacher's helper for a day.", cost: 60,  type: 'recognition', status: 'Active', createdAt: nowIso() },
+      { rewardId: 'R003', name: 'Sticker Pack',  description: 'A pack of fun stickers.',          cost: 40,  type: 'item',       status: 'Active', createdAt: nowIso() },
+    ]);
+  }
+
   // Default settings row (school name, theme).
   if (readAll(SHEETS.SETTINGS).length === 0) {
     appendRows(SHEETS.SETTINGS, [
@@ -157,4 +183,92 @@ function resetDatabase() {
   seedSampleData();
   CacheService.getScriptCache().removeAll(['dashboard']);
   return 'Database reset and reseeded.';
+}
+
+/**
+ * OPTIONAL lively demo data — run this ONCE after setupDatabase() for a great
+ * preview. It fills the dashboard charts, leaderboard, badges and certificates
+ * with realistic sample activity so every screen looks alive, without anyone
+ * needing to scan a real QR code.
+ *
+ * Safe & opt-in: runs only once (guarded by a 'demoSeeded' setting) and never
+ * deletes anything. To start completely fresh again, run resetDatabase().
+ */
+function seedDemoData() {
+  if (String((getSettings() || {}).demoSeeded) === 'true') {
+    return 'Demo data is already loaded. Run resetDatabase() to start over.';
+  }
+
+  // Helper: an ISO timestamp `d` days ago, at the given hour.
+  function ago(d, hour) {
+    var x = new Date(); x.setDate(x.getDate() - d);
+    x.setHours(hour == null ? 9 : hour, 12, 0, 0);
+    return x.toISOString();
+  }
+
+  // Map each sample pupil to their TASK001 QR token (created by setupDatabase).
+  var tok = {};
+  findWhere(SHEETS.QR_CODES, 'taskId', 'TASK001').forEach(function (q) { tok[q.entityId] = q.token; });
+
+  // 1) Bring those QR codes to life: scanned / in-progress / completed.
+  var qrUpdates = {
+    STU001: { progress: 'Completed',  scanCount: 4, points: 10, firstScan: ago(5, 8),  lastScan: ago(0, 9),  completedAt: ago(0, 9) },
+    STU002: { progress: 'Completed',  scanCount: 3, points: 10, firstScan: ago(4, 10), lastScan: ago(1, 11), completedAt: ago(1, 11) },
+    STU003: { progress: 'In Progress', scanCount: 2, points: 0, firstScan: ago(3, 12), lastScan: ago(0, 13) },
+    STU004: { progress: 'Opened',      scanCount: 1, points: 0, firstScan: ago(2, 14), lastScan: ago(2, 14) },
+  };
+  Object.keys(qrUpdates).forEach(function (sid) {
+    if (tok[sid]) updateWhere(SHEETS.QR_CODES, 'token', tok[sid], qrUpdates[sid]);
+  });
+
+  // 2) Scan history (drives the daily + peak-hour charts and "scans today").
+  var plan = [
+    ['STU001', 5, 8], ['STU001', 2, 9], ['STU001', 0, 9],
+    ['STU002', 4, 10], ['STU002', 1, 11],
+    ['STU003', 3, 12], ['STU003', 0, 13],
+    ['STU004', 2, 14], ['STU001', 0, 10], ['STU002', 0, 11],
+  ];
+  var devices = ['mobile', 'mobile', 'tablet', 'desktop'];
+  appendRows(SHEETS.SCAN_LOGS, plan.map(function (p, i) {
+    return {
+      logId: uid('SCAN'), token: tok[p[0]] || '', taskId: 'TASK001', entityId: p[0],
+      timestamp: ago(p[1], p[2]), deviceType: devices[i % devices.length],
+      userAgent: 'demo', action: 'scan',
+    };
+  }));
+
+  // 3) Completion records for the two finished pupils.
+  appendRows(SHEETS.COMPLETION_LOGS, [
+    { logId: uid('COMP'), token: tok.STU001 || '', taskId: 'TASK001', entityId: 'STU001', method: 'auto',   status: 'Completed', durationSec: 320, evidence: '', reviewedBy: 'Admin Teacher', notes: '',           timestamp: ago(0, 9) },
+    { logId: uid('COMP'), token: tok.STU002 || '', taskId: 'TASK001', entityId: 'STU002', method: 'manual', status: 'Completed', durationSec: 410, evidence: '', reviewedBy: 'Admin Teacher', notes: 'Great work', timestamp: ago(1, 11) },
+  ]);
+
+  // 4) Points ledger (drives the gamified leaderboard balances).
+  appendRows(SHEETS.POINTS_LOG, [
+    { logId: uid('PT'), entityId: 'STU001', taskId: 'TASK001', points: 10, reason: 'task:TASK001',            timestamp: ago(0, 9) },
+    { logId: uid('PT'), entityId: 'STU001', taskId: '',        points: 5,  reason: 'Bonus: excellent effort', timestamp: ago(0, 9) },
+    { logId: uid('PT'), entityId: 'STU002', taskId: 'TASK001', points: 10, reason: 'task:TASK001',            timestamp: ago(1, 11) },
+    { logId: uid('PT'), entityId: 'STU003', taskId: '',        points: 5,  reason: 'Participation',           timestamp: ago(0, 13) },
+  ]);
+
+  // 5) Earned badges (First Steps = scanned at least once).
+  appendRows(SHEETS.STUDENT_BADGES, ['STU001', 'STU002', 'STU003', 'STU004'].map(function (sid) {
+    return { logId: uid('BDG'), entityId: sid, badgeId: 'B001', reason: 'Auto: first_scan', awardedAt: ago(3, 9) };
+  }));
+
+  // 6) A second campaign so the Campaigns list shows more than one.
+  if (!findOne(SHEETS.CAMPAIGNS, 'campaignId', 'CAMP002')) {
+    appendRow(SHEETS.CAMPAIGNS, {
+      campaignId: 'CAMP002', name: 'Science Fair 2026', description: 'Whole-school science projects.',
+      subject: 'Science', program: 'STEM', startDate: ago(-1, 9).slice(0, 10), endDate: ago(-30, 9).slice(0, 10),
+      status: 'Draft', teacherInCharge: 'Admin Teacher', notes: '', createdAt: nowIso(),
+    });
+  }
+
+  // 7) A sample certificate for the top pupil (campaign award).
+  issueCertificate({ entityId: 'STU001', scope: 'campaign', scopeId: 'CAMP001', issuedBy: 'Admin Teacher' });
+
+  saveSetting('demoSeeded', 'true');
+  invalidateDashboard();
+  return 'Demo data loaded: scans, completions, points, badges and a certificate. Refresh the app to see it.';
 }

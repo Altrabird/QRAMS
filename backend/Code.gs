@@ -27,6 +27,11 @@ function doGet(e) {
     return redirectPage(dest);
   }
 
+  // A2) CERTIFICATE VERIFY: a certificate QR was opened. p.cert is the token.
+  if (p.cert) {
+    return verifyPage(verifyCertificate(p.cert));
+  }
+
   // B) READ API
   try {
     var action = p.action || 'ping';
@@ -54,6 +59,16 @@ function routeGet(action, p) {
     case 'getQR':          requireRole(p.token, CONFIG.ROLES); return getQR(p.qrToken);
     case 'getQRDetail':    requireRole(p.token, CONFIG.ROLES); return getQRDetail(p.qrToken);
     case 'getSettings':    requireRole(p.token, CONFIG.ROLES); return getSettings();
+
+    // ---- Phase 2 reads ----
+    case 'getCampaign':      requireRole(p.token, CONFIG.ROLES); return getCampaign(p.campaignId);
+    case 'leaderboard':      requireRole(p.token, CONFIG.ROLES); return getLeaderboard(p.className);
+    case 'listBadges':       requireRole(p.token, CONFIG.ROLES); return listBadges();
+    case 'getStudentBadges': requireRole(p.token, CONFIG.ROLES); return getStudentBadges(p.entityId);
+    case 'getStudentPoints': requireRole(p.token, CONFIG.ROLES); return { entityId: p.entityId, points: getStudentPoints(p.entityId) };
+    case 'listRewards':      requireRole(p.token, CONFIG.ROLES); return listRewards();
+    case 'listCertificates': requireRole(p.token, CONFIG.ROLES); return listCertificates(p.scopeId);
+    case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -104,6 +119,14 @@ function routePost(action, b) {
     // Completion
     case 'markComplete':    requireRole(b.token, WRITERS); return markComplete(b);
 
+    // ---- Phase 2 writes ----
+    case 'saveBadge':         requireRole(b.token, WRITERS); return saveBadge(b);
+    case 'awardPoints':       requireRole(b.token, WRITERS); return awardPoints(b.entityId, b.taskId, Number(b.points), b.reason || 'Manual award');
+    case 'saveReward':        requireRole(b.token, WRITERS); return saveReward(b);
+    case 'redeemReward':      requireRole(b.token, WRITERS); return redeemReward(b);
+    case 'issueCertificate':  requireRole(b.token, WRITERS); return issueCertificate(b);
+    case 'revokeCertificate': requireRole(b.token, WRITERS); return revokeCertificate(b.certToken);
+
     // Settings + users (admin only)
     case 'saveSetting':     requireRole(b.token, ['admin']); return saveSetting(b.key, b.value);
     case 'createUser':      return createUser(requireRole(b.token, ['admin']), b);
@@ -142,5 +165,39 @@ function redirectPage(url) {
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/* ----------------------- Certificate verify page ----------------------- */
+/**
+ * The page shown when someone scans a certificate's QR (?cert=<token>).
+ * Green tick + the pupil's name if genuine, red cross if revoked/unknown.
+ */
+function verifyPage(r) {
+  var ok = !!(r && r.valid);
+  var color = ok ? '#16a34a' : '#dc2626';
+  var mark = ok ? '&#10003;' : '&#10007;'; // ✓ / ✕
+  var inner = ok
+    ? '<h1 style="color:' + color + '">' + mark + ' Verified</h1>' +
+      '<p class="big">' + escapeHtml(r.entityName) + '</p>' +
+      '<p>' + escapeHtml(r.title) + '</p>' +
+      '<p class="muted">Issued ' + escapeHtml(String(r.issuedAt).slice(0, 10)) +
+      (r.issuedBy ? ' by ' + escapeHtml(r.issuedBy) : '') + '</p>' +
+      '<p class="muted">Ref: ' + escapeHtml(r.certId) + '</p>'
+    : '<h1 style="color:' + color + '">' + mark + ' Not valid</h1>' +
+      '<p>' + escapeHtml((r && r.message) || 'Unknown certificate.') + '</p>';
+
+  var html =
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>Certificate check</title>' +
+    '<style>body{font-family:system-ui,Arial,sans-serif;min-height:100vh;margin:0;display:flex;' +
+    'align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;text-align:center;padding:16px}' +
+    '.card{background:#1e293b;padding:32px 28px;border-radius:18px;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,.45)}' +
+    'h1{margin:.2em 0;font-size:1.6rem}.big{font-size:1.3rem;font-weight:700;margin:.4em 0}' +
+    '.muted{color:#94a3b8;font-size:.9rem;margin:.2em 0}</style></head>' +
+    '<body><div class="card">' + inner + '</div></body></html>';
+
+  return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

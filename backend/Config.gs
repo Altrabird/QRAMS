@@ -14,7 +14,7 @@
 
 /** App-wide settings. */
 const CONFIG = {
-  APP_NAME: 'QRAMS — QR Task Splitter & Tracking System',
+  APP_NAME: 'QRAMS — QR Assignment Management System',
   VERSION: '1.0.0',
 
   // How long (seconds) to cache hot lookups (token -> task) and the dashboard.
@@ -46,6 +46,9 @@ const SHEETS = {
   REWARDS: 'Rewards',
   ATTENDANCE: 'Attendance',
   TEACHER_NOTES: 'Teacher_Notes',
+  // ---- Phase 2 (now live) ----
+  STUDENT_BADGES: 'Student_Badges', // which pupil earned which badge (1 row each)
+  CERTIFICATES: 'Certificates',     // issued, QR-verifiable certificates
 };
 
 /**
@@ -91,9 +94,18 @@ const SCHEMA = {
   // ---- Phase 2 stubs ----
   Points_Log: ['logId', 'entityId', 'taskId', 'points', 'reason', 'timestamp'],
   Badges: ['badgeId', 'name', 'description', 'icon', 'criteria', 'createdAt'],
-  Rewards: ['rewardId', 'name', 'description', 'cost', 'type', 'createdAt'],
+  Rewards: ['rewardId', 'name', 'description', 'cost', 'type', 'status', 'createdAt'],
   Attendance: ['logId', 'studentId', 'date', 'status', 'recordedBy', 'timestamp'],
   Teacher_Notes: ['noteId', 'entityId', 'taskId', 'author', 'type', 'note', 'timestamp'],
+
+  // ---- Phase 2 (now live) ----
+  // One row each time a pupil earns a badge (lets us never award the same one twice).
+  Student_Badges: ['logId', 'entityId', 'badgeId', 'reason', 'awardedAt'],
+  // One row per issued certificate. `token` is the value the QR on the cert encodes.
+  Certificates: [
+    'certId', 'token', 'entityId', 'entityName', 'scope', 'scopeId',
+    'title', 'issuedBy', 'issuedAt', 'status',
+  ],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -104,4 +116,16 @@ const ENUMS = {
   progress: ['Not Started', 'Opened', 'Started', 'In Progress', 'Submitted', 'Reviewed', 'Completed'],
   completionMode: ['auto', 'manual', 'form', 'quiz', 'evidence', 'time'],
   entityType: ['student', 'group', 'class', 'teacher', 'event', 'custom'],
+
+  // ---- Phase 2 ----
+  // Badge rules live as a short text string in the Badges sheet's `criteria`
+  // column. checkBadges() understands these shapes:
+  //   'first_scan'        → earned on the pupil's very first scan
+  //   'tasks:N'           → earned after completing N tasks   (e.g. 'tasks:5')
+  //   'points:N'          → earned after reaching N points    (e.g. 'points:100')
+  //   'perfect_campaign'  → earned when every task in a campaign is done
+  rewardType: ['privilege', 'item', 'recognition'],
+  rewardStatus: ['Active', 'Disabled'],
+  certScope: ['task', 'campaign'],
+  certStatus: ['Valid', 'Revoked'],
 };

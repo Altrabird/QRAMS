@@ -54,6 +54,7 @@ function showApp() {
   const u = QRAMS.getUser() || {};
   UI.el('userName').textContent = u.name || 'User';
   UI.el('userRole').textContent = 'Role: ' + (u.role || '—');
+  applyGamificationNav();
   loadSchoolName();
   if (!location.hash) location.hash = '#/dashboard';
   Router.handle();
@@ -111,19 +112,31 @@ function connectionModal() {
 }
 
 async function loadSchoolName() {
-  try { const s = await Api.getSettings(); if (s.schoolName) UI.el('schoolBadge').textContent = s.schoolName; }
-  catch (e) {}
+  try {
+    const s = await Api.getSettings();
+    if (s.schoolName) UI.el('schoolBadge').textContent = s.schoolName;
+    QRAMS.setGamify(s.gamificationEnabled === 'true');
+  } catch (e) {}
+  applyGamificationNav();
+}
+
+/* Show or hide the gamification menu items based on the saved setting. */
+function applyGamificationNav() {
+  document.body.classList.toggle('gami-on', QRAMS.getGamify());
 }
 
 /* ============================ ROUTER ============================ */
 const Router = {
   routes: {
     dashboard: { title: 'Dashboard', render: renderDashboard },
+    campaigns: { title: 'Campaigns', render: renderCampaigns },
     tasks: { title: 'Tasks', render: renderTasks },
     generator: { title: 'QR Generator', render: renderGenerator },
     students: { title: 'Students', render: renderStudents },
     import: { title: 'Bulk Import', render: renderImport },
     analytics: { title: 'Analytics', render: renderAnalytics },
+    leaderboard: { title: 'Leaderboard', render: renderLeaderboard },
+    rewards: { title: 'Rewards & Badges', render: renderRewards },
     settings: { title: 'Settings', render: renderSettings },
   },
   current: null,
@@ -134,6 +147,8 @@ const Router = {
     document.querySelectorAll('.sidebar-nav a').forEach(a =>
       a.classList.toggle('active', a.dataset.route === name));
     if (name === 'qr' && param) { UI.el('pageTitle').textContent = 'QR Details'; this.current = ['qr', param]; return renderQRDetail(param); }
+    if (name === 'campaign' && param) { UI.el('pageTitle').textContent = 'Campaign'; this.current = ['campaign', param]; return renderCampaignDetail(param); }
+    if (name === 'cert' && param) { UI.el('pageTitle').textContent = 'Certificate'; this.current = ['cert', param]; return renderCertificate(param); }
     const route = this.routes[name] || this.routes.dashboard;
     UI.el('pageTitle').textContent = route.title;
     this.current = [name, param];
@@ -539,6 +554,7 @@ async function renderQRDetail(token) {
             <button class="btn btn-sm btn-outline-warning" onclick="qrToggle('${UI.esc(token)}','${qr.status === 'Disabled' ? 'Active' : 'Disabled'}')">
               <i class="bi bi-power me-1"></i>${qr.status === 'Disabled' ? 'Enable' : 'Disable'}</button>
             <button class="btn btn-sm btn-outline-danger" onclick="qrRegen('${UI.esc(token)}')"><i class="bi bi-arrow-repeat me-1"></i>Regenerate</button>
+            <button class="btn btn-sm btn-outline-info" onclick="issueCertModal(${UI.esc(JSON.stringify({ scope: 'task', scopeId: qr.taskId, entityId: qr.entityId, entityName: qr.label }))})"><i class="bi bi-patch-check me-1"></i>Certificate</button>
           </div>
           <div class="section-head"><h2>Scan history</h2></div>
           ${scans.length ? `<div class="table-responsive"><table class="table table-sm"><thead><tr><th>When</th><th>Device</th></tr></thead>
@@ -596,7 +612,7 @@ async function renderSettings() {
           <button class="btn btn-outline-primary" id="setSchoolSave">Save</button></div>
         <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="setGamify" ${settings.gamificationEnabled === 'true' ? 'checked' : ''}>
-          <label class="form-check-label" for="setGamify">Enable gamification (points &amp; leaderboard) <span class="badge text-bg-light">Phase 2</span></label>
+          <label class="form-check-label" for="setGamify">Enable gamification — points, badges, leaderboard &amp; rewards</label>
         </div>
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="setTheme" ${document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'checked' : ''}>
@@ -611,8 +627,9 @@ async function renderSettings() {
       </div></div>
       <div class="col-lg-6"><div class="card p-3">
         <div class="section-head"><h2><i class="bi bi-info-circle me-1"></i>About</h2></div>
-        <p class="small text-secondary mb-0">QRAMS v1.0 · Phase 1. Campaigns, gamification, badges and certificates
-          are scaffolded in the database and unlock in Phase 2 — no rebuild needed.</p>
+        <p class="small text-secondary mb-0">QRAMS v1.0 · Phase 2. Campaigns, gamification (points, badges,
+          leaderboard, rewards) and QR-verifiable certificates are active. Toggle gamification above to
+          show or hide those menus.</p>
       </div></div>
     </div>`;
   UI.el('setApiSave').onclick = () => { QRAMS.setApiUrl(UI.el('setApi').value); UI.toast('Saved.'); };
@@ -626,6 +643,321 @@ async function renderSettings() {
     try { await Api.saveSetting('schoolName', UI.el('setSchool').value); UI.el('schoolBadge').textContent = UI.el('setSchool').value; UI.toast('School name saved.'); }
     catch (e) { UI.toast(e.message, 'danger'); }
   };
-  UI.el('setGamify').onchange = async (e) => { try { await Api.saveSetting('gamificationEnabled', e.target.checked ? 'true' : 'false'); UI.toast('Saved.'); } catch (err) { UI.toast(err.message, 'danger'); } };
+  UI.el('setGamify').onchange = async (e) => {
+    try {
+      await Api.saveSetting('gamificationEnabled', e.target.checked ? 'true' : 'false');
+      QRAMS.setGamify(e.target.checked); applyGamificationNav();
+      UI.toast(e.target.checked ? 'Gamification ON — Leaderboard & Rewards added to the menu.' : 'Gamification off.');
+    } catch (err) { UI.toast(err.message, 'danger'); }
+  };
   UI.el('setTheme').onchange = toggleTheme;
+}
+
+/* =======================================================================
+   PHASE 2 — CAMPAIGNS · LEADERBOARD · REWARDS · BADGES · CERTIFICATES
+   ======================================================================= */
+
+/* ------------------------------ CAMPAIGNS ------------------------------ */
+let _campaignList = [];
+async function renderCampaigns() {
+  UI.loading('Loading campaigns…');
+  try {
+    _campaignList = await Api.listCampaigns();
+    UI.view().innerHTML = `
+      <div class="section-head"><h2>Campaigns</h2>
+        <button class="btn btn-primary btn-sm ms-auto" onclick="campaignModal()"><i class="bi bi-plus-lg me-1"></i>New Campaign</button></div>
+      ${_campaignList.length
+        ? `<div class="row g-3">${_campaignList.map(campaignCard).join('')}</div>`
+        : UI.emptyState('collection', 'No campaigns yet', 'Group related tasks under a campaign (e.g. “English Week”).',
+            `<button class="btn btn-primary btn-sm" onclick="campaignModal()">New Campaign</button>`)}`;
+  } catch (err) { UI.error(err.message); }
+}
+function campaignCard(c) {
+  return `<div class="col-md-6 col-xl-4"><div class="card p-3 h-100 cursor-pointer" onclick="Router.go('#/campaign/${UI.esc(c.campaignId)}')">
+    <div class="d-flex align-items-start gap-2">
+      <div class="stat-icon tint-violet"><i class="bi bi-collection"></i></div>
+      <div class="flex-fill"><div class="fw-bold">${UI.esc(c.name)}</div>
+        <div class="small text-secondary">${UI.esc(c.subject || '—')}</div></div>
+      ${UI.statusBadge(c.status)}
+    </div>
+    <p class="small text-secondary mt-2 mb-1">${UI.esc((c.description || '').slice(0, 90))}</p>
+    <div class="small text-secondary"><i class="bi bi-calendar3 me-1"></i>${UI.date(c.startDate)} → ${UI.date(c.endDate)}</div>
+  </div></div>`;
+}
+function campaignModal(id) {
+  const c = id ? (_campaignList.find(x => x.campaignId === id) || {}) : {};
+  UI.modal(`
+    <div class="modal-header"><h5 class="modal-title">${id ? 'Edit' : 'New'} Campaign</h5>
+      <button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><form id="campForm" class="row g-3">
+      <div class="col-md-8"><label class="form-label small fw-semibold">Name *</label>
+        <input class="form-control" name="name" value="${UI.esc(c.name)}" required></div>
+      <div class="col-md-4"><label class="form-label small fw-semibold">Status</label>
+        <select class="form-select" name="status">${UI.options(['Draft', 'Active', 'Paused', 'Completed', 'Archived'], c.status || 'Active')}</select></div>
+      <div class="col-md-6"><label class="form-label small fw-semibold">Subject</label>
+        <input class="form-control" name="subject" value="${UI.esc(c.subject)}"></div>
+      <div class="col-md-6"><label class="form-label small fw-semibold">Program</label>
+        <input class="form-control" name="program" value="${UI.esc(c.program)}"></div>
+      <div class="col-12"><label class="form-label small fw-semibold">Description</label>
+        <textarea class="form-control" name="description" rows="2">${UI.esc(c.description)}</textarea></div>
+      <div class="col-md-4"><label class="form-label small fw-semibold">Start date</label>
+        <input class="form-control" name="startDate" type="date" value="${UI.esc((c.startDate || '').slice(0, 10))}"></div>
+      <div class="col-md-4"><label class="form-label small fw-semibold">End date</label>
+        <input class="form-control" name="endDate" type="date" value="${UI.esc((c.endDate || '').slice(0, 10))}"></div>
+      <div class="col-md-4"><label class="form-label small fw-semibold">Teacher in charge</label>
+        <input class="form-control" name="teacherInCharge" value="${UI.esc(c.teacherInCharge || (QRAMS.getUser() || {}).name || '')}"></div>
+    </form></div>
+    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-primary" id="saveCampBtn">Save</button></div>`);
+  UI.el('saveCampBtn').onclick = async () => {
+    const f = UI.el('campForm'); if (!f.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(f).entries());
+    if (id) payload.campaignId = id;
+    try { await Api.saveCampaign(payload); UI.closeModal(); UI.toast('Campaign saved.'); renderCampaigns(); }
+    catch (err) { UI.toast(err.message, 'danger'); }
+  };
+}
+
+async function renderCampaignDetail(id) {
+  UI.loading('Loading campaign…');
+  try {
+    const [c, certs] = await Promise.all([Api.getCampaign(id), Api.listCertificates(id).catch(() => [])]);
+    const s = c.stats || {};
+    UI.view().innerHTML = `
+      <a href="#/campaigns" class="btn btn-sm btn-ghost mb-2"><i class="bi bi-arrow-left me-1"></i>Campaigns</a>
+      <div class="section-head"><h2>${UI.esc(c.name)}</h2> ${UI.statusBadge(c.status)}
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="campaignModal('${UI.esc(c.campaignId)}')"><i class="bi bi-pencil me-1"></i>Edit</button></div>
+      <div class="row g-3 mb-3">
+        ${statCard('list-check', 'tint-blue', s.tasks || 0, 'Tasks')}
+        ${statCard('qr-code', 'tint-violet', s.qrCodes || 0, 'QR Codes')}
+        ${statCard('check2-circle', 'tint-green', s.completed || 0, 'Completed')}
+        ${statCard('percent', 'tint-amber', (s.completionRate || 0) + '%', 'Completion')}
+      </div>
+      <div class="row g-3">
+        <div class="col-lg-7"><div class="card p-3">
+          <div class="section-head"><h2>Tasks in this campaign</h2></div>
+          ${(c.tasks && c.tasks.length)
+            ? `<div class="table-responsive"><table class="table table-sm table-hover mb-0"><tbody>${c.tasks.map(t => `<tr>
+                <td><a href="#/generator/${UI.esc(t.taskId)}" class="fw-semibold text-decoration-none">${UI.esc(t.title)}</a>
+                  <div class="small text-secondary">${UI.esc(t.subject || '')}</div></td>
+                <td class="text-end">${UI.statusBadge(t.status)}</td></tr>`).join('')}</tbody></table></div>`
+            : '<p class="small text-secondary mb-0">No tasks yet. Create a task and set its Campaign to this one.</p>'}
+        </div></div>
+        <div class="col-lg-5"><div class="card p-3">
+          <div class="section-head"><h2><i class="bi bi-patch-check me-1"></i>Certificates</h2>
+            <button class="btn btn-sm btn-primary ms-auto" title="Issue certificate"
+              onclick="issueCertModal(${UI.esc(JSON.stringify({ scope: 'campaign', scopeId: c.campaignId }))})"><i class="bi bi-plus-lg"></i></button></div>
+          ${certs.length ? `<div class="list-group list-group-flush">${certs.map(certRow).join('')}</div>`
+            : '<p class="small text-secondary mb-0">None issued yet. Click + to award one.</p>'}
+        </div></div>
+      </div>`;
+  } catch (err) { UI.error(err.message); }
+}
+function certRow(c) {
+  const valid = c.status === 'Valid';
+  return `<div class="list-group-item d-flex align-items-center gap-2 px-0">
+    <div class="flex-fill"><div class="fw-semibold">${UI.esc(c.entityName)}</div>
+      <div class="small text-secondary">${UI.esc(c.certId)} · ${UI.date(c.issuedAt)}</div></div>
+    ${valid ? `<a class="btn btn-sm btn-outline-primary" href="#/cert/${UI.esc(c.token)}" title="Open / print"><i class="bi bi-printer"></i></a>`
+      : '<span class="badge text-bg-danger">Revoked</span>'}
+  </div>`;
+}
+
+/* ------------------------------ LEADERBOARD ------------------------------ */
+async function renderLeaderboard() {
+  if (!QRAMS.getGamify()) return gamificationOffNotice('Leaderboard');
+  UI.loading('Loading leaderboard…');
+  try {
+    const [board, students] = await Promise.all([Api.leaderboard(), Api.listStudents()]);
+    const classes = [...new Set(students.map(s => s.className).filter(Boolean))];
+    UI.view().innerHTML = `
+      <div class="section-head"><h2><i class="bi bi-trophy text-warning me-1"></i>Leaderboard</h2>
+        <select class="form-select form-select-sm ms-auto" id="lbClass" style="max-width:200px">
+          <option value="">All classes</option>${classes.map(c => `<option>${UI.esc(c)}</option>`).join('')}</select></div>
+      <div class="card p-0" id="lbCard">${leaderboardFull(board)}</div>`;
+    UI.el('lbClass').onchange = async (e) => {
+      UI.el('lbCard').innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-primary"></div></div>';
+      try { UI.el('lbCard').innerHTML = leaderboardFull(await Api.leaderboard(e.target.value)); }
+      catch (err) { UI.el('lbCard').innerHTML = `<div class="p-3 text-danger small">${UI.esc(err.message)}</div>`; }
+    };
+  } catch (err) { UI.error(err.message); }
+}
+function leaderboardFull(rows) {
+  if (!rows.length) return UI.emptyState('trophy', 'No points yet', 'Points are earned when pupils complete tasks.');
+  const medal = ['🥇', '🥈', '🥉'];
+  return `<div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>#</th><th>Name</th><th>Class</th><th class="text-center">Badges</th><th class="text-end">Done</th><th class="text-end">Points</th></tr></thead>
+    <tbody>${rows.map((r, i) => `<tr>
+      <td class="lb-rank">${i < 3 ? medal[i] : (i + 1)}</td>
+      <td class="fw-semibold">${UI.esc(r.label)}</td>
+      <td class="small text-secondary">${UI.esc(r.className)}</td>
+      <td class="text-center">${r.badges ? `<span class="badge text-bg-light">${r.badges} <i class="bi bi-award"></i></span>` : '—'}</td>
+      <td class="text-end">${r.completed}</td>
+      <td class="text-end pts">${r.points}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function gamificationOffNotice(feature) {
+  UI.view().innerHTML = UI.emptyState('toggle-off', feature + ' is switched off',
+    'Turn on gamification in Settings to use points, badges, the leaderboard and rewards.',
+    `<a class="btn btn-primary btn-sm" href="#/settings">Open Settings</a>`);
+}
+
+/* --------------------------- REWARDS & BADGES --------------------------- */
+let _rewardsCache = [], _badgesCache = [];
+async function renderRewards() {
+  if (!QRAMS.getGamify()) return gamificationOffNotice('Rewards & Badges');
+  UI.loading('Loading rewards & badges…');
+  try {
+    const [rewards, badges, students] = await Promise.all([Api.listRewards(), Api.listBadges(), Api.listStudents()]);
+    _rewardsCache = rewards; _badgesCache = badges; _genStudents = students;
+    UI.view().innerHTML = `
+      <div class="row g-3">
+        <div class="col-lg-7"><div class="card p-3">
+          <div class="section-head"><h2><i class="bi bi-gift me-1"></i>Rewards</h2>
+            <button class="btn btn-sm btn-primary ms-auto" onclick="rewardModal()"><i class="bi bi-plus-lg me-1"></i>New</button></div>
+          ${rewards.length ? `<div class="row g-2">${rewards.map(rewardCard).join('')}</div>` : '<p class="small text-secondary mb-0">No rewards yet.</p>'}
+        </div></div>
+        <div class="col-lg-5"><div class="card p-3">
+          <div class="section-head"><h2><i class="bi bi-coin me-1"></i>Redeem points</h2></div>
+          <label class="form-label small fw-semibold">Pupil</label>
+          <select class="form-select mb-2" id="redeemStu">${students.map(s => `<option value="${UI.esc(s.studentId)}">${UI.esc(s.name)} · ${UI.esc(s.className)}</option>`).join('') || '<option disabled>No students</option>'}</select>
+          <div id="redeemBalance" class="small text-secondary mb-2"></div>
+          <label class="form-label small fw-semibold">Reward</label>
+          <select class="form-select mb-3" id="redeemReward">${rewards.filter(r => r.status !== 'Disabled').map(r => `<option value="${UI.esc(r.rewardId)}">${UI.esc(r.name)} — ${r.cost} pts</option>`).join('')}</select>
+          <button class="btn btn-primary w-100" id="redeemBtn"><i class="bi bi-bag-check me-1"></i>Redeem</button>
+        </div></div>
+        <div class="col-12"><div class="card p-3">
+          <div class="section-head"><h2><i class="bi bi-award me-1"></i>Badges</h2>
+            <button class="btn btn-sm btn-outline-primary ms-auto" onclick="badgeModal()"><i class="bi bi-plus-lg me-1"></i>New badge</button></div>
+          <div class="d-flex flex-wrap">${badges.map(badgeAdminChip).join('') || '<span class="small text-secondary">No badges defined.</span>'}</div>
+          <p class="small text-secondary mt-2 mb-0">Badges are awarded automatically when a pupil meets the rule — e.g.
+            <code>first_scan</code>, <code>tasks:5</code>, <code>points:100</code>, <code>perfect_campaign</code>.</p>
+        </div></div>
+      </div>`;
+    const showBalance = async () => {
+      const id = UI.el('redeemStu').value; if (!id) return;
+      UI.el('redeemBalance').textContent = 'Checking balance…';
+      try { const r = await Api.getStudentPoints(id); UI.el('redeemBalance').innerHTML = `Balance: <span class="pts">${r.points}</span> pts`; }
+      catch (e) { UI.el('redeemBalance').textContent = ''; }
+    };
+    UI.el('redeemStu').onchange = showBalance; showBalance();
+    UI.el('redeemBtn').onclick = doRedeem;
+  } catch (err) { UI.error(err.message); }
+}
+function rewardCard(r) {
+  return `<div class="col-sm-6"><div class="border rounded p-2 h-100">
+    <div class="d-flex justify-content-between"><span class="fw-semibold">${UI.esc(r.name)}</span><span class="pts">${r.cost}</span></div>
+    <div class="small text-secondary">${UI.esc(r.description || '')}</div>
+    <div class="mt-1"><span class="badge text-bg-light">${UI.esc(r.type)}</span>
+      ${r.status === 'Disabled' ? '<span class="badge text-bg-secondary ms-1">off</span>' : ''}
+      <button class="btn btn-sm btn-link p-0 ms-2" onclick="rewardModal('${UI.esc(r.rewardId)}')">Edit</button></div>
+  </div></div>`;
+}
+function badgeAdminChip(b) {
+  return `<span class="badge-chip cursor-pointer" title="${UI.esc(b.description)}" onclick="badgeModal('${UI.esc(b.badgeId)}')">
+    <span class="ico">${UI.esc(b.icon || '🏅')}</span> ${UI.esc(b.name)} <code>${UI.esc(b.criteria)}</code></span>`;
+}
+async function doRedeem() {
+  const entityId = UI.el('redeemStu').value, rewardId = UI.el('redeemReward').value;
+  if (!entityId || !rewardId) return UI.toast('Pick a pupil and a reward.', 'warning');
+  const btn = UI.el('redeemBtn'); btn.disabled = true;
+  try { const r = await Api.redeemReward({ entityId, rewardId }); UI.toast(`Redeemed “${r.reward}”. New balance: ${r.balance} pts.`); renderRewards(); }
+  catch (e) { UI.toast(e.message, 'danger'); btn.disabled = false; }
+}
+function rewardModal(id) {
+  const r = id ? (_rewardsCache.find(x => x.rewardId === id) || {}) : {};
+  UI.modal(`<div class="modal-header"><h5 class="modal-title">${id ? 'Edit' : 'New'} Reward</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><form id="rewardForm" class="row g-3">
+      <div class="col-md-8"><label class="form-label small fw-semibold">Name *</label><input class="form-control" name="name" value="${UI.esc(r.name)}" required></div>
+      <div class="col-md-4"><label class="form-label small fw-semibold">Cost (pts)</label><input class="form-control" type="number" min="0" name="cost" value="${UI.esc(r.cost || 10)}"></div>
+      <div class="col-12"><label class="form-label small fw-semibold">Description</label><input class="form-control" name="description" value="${UI.esc(r.description)}"></div>
+      <div class="col-md-6"><label class="form-label small fw-semibold">Type</label><select class="form-select" name="type">${UI.options(QRAMS.ENUMS.rewardType, r.type || 'item')}</select></div>
+      <div class="col-md-6"><label class="form-label small fw-semibold">Status</label><select class="form-select" name="status">${UI.options(['Active', 'Disabled'], r.status || 'Active')}</select></div>
+    </form></div>
+    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveRewardBtn">Save</button></div>`);
+  UI.el('saveRewardBtn').onclick = async () => {
+    const f = UI.el('rewardForm'); if (!f.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(f).entries()); if (id) payload.rewardId = id;
+    try { await Api.saveReward(payload); UI.closeModal(); UI.toast('Reward saved.'); renderRewards(); } catch (e) { UI.toast(e.message, 'danger'); }
+  };
+}
+function badgeModal(id) {
+  const b = id ? (_badgesCache.find(x => x.badgeId === id) || {}) : {};
+  UI.modal(`<div class="modal-header"><h5 class="modal-title">${id ? 'Edit' : 'New'} Badge</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><form id="badgeForm" class="row g-3">
+      <div class="col-md-3"><label class="form-label small fw-semibold">Icon</label><input class="form-control text-center" name="icon" value="${UI.esc(b.icon || '🏅')}" maxlength="2"></div>
+      <div class="col-md-9"><label class="form-label small fw-semibold">Name *</label><input class="form-control" name="name" value="${UI.esc(b.name)}" required></div>
+      <div class="col-12"><label class="form-label small fw-semibold">Description</label><input class="form-control" name="description" value="${UI.esc(b.description)}"></div>
+      <div class="col-12"><label class="form-label small fw-semibold">Rule (criteria)</label>
+        <input class="form-control" name="criteria" value="${UI.esc(b.criteria)}" placeholder="tasks:5">
+        <div class="form-text"><code>first_scan</code> · <code>tasks:N</code> · <code>points:N</code> · <code>perfect_campaign</code></div></div>
+    </form></div>
+    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveBadgeBtn">Save</button></div>`);
+  UI.el('saveBadgeBtn').onclick = async () => {
+    const f = UI.el('badgeForm'); if (!f.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(f).entries()); if (id) payload.badgeId = id;
+    try { await Api.saveBadge(payload); UI.closeModal(); UI.toast('Badge saved.'); renderRewards(); } catch (e) { UI.toast(e.message, 'danger'); }
+  };
+}
+
+/* ------------------------------ CERTIFICATES ------------------------------ */
+async function issueCertModal(opts) {
+  opts = opts || {};
+  const haveNamed = opts.entityId && opts.entityName;
+  let students = _genStudents;
+  if (!haveNamed && !students.length) { try { students = _genStudents = await Api.listStudents(); } catch (e) {} }
+  const stuOptions = (students || []).map(s => `<option value="${UI.esc(s.studentId)}"${s.studentId === opts.entityId ? ' selected' : ''}>${UI.esc(s.name)} · ${UI.esc(s.className)}</option>`).join('');
+  UI.modal(`<div class="modal-header"><h5 class="modal-title"><i class="bi bi-patch-check me-2"></i>Issue certificate</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><form id="certForm" class="row g-3">
+      <div class="col-12"><label class="form-label small fw-semibold">Pupil *</label>
+        ${haveNamed
+          ? `<input class="form-control" value="${UI.esc(opts.entityName)}" readonly><input type="hidden" name="entityId" value="${UI.esc(opts.entityId)}"><input type="hidden" name="entityName" value="${UI.esc(opts.entityName)}">`
+          : `<select class="form-select" name="entityId" required>${stuOptions || '<option value="" disabled selected>No students loaded</option>'}</select>`}</div>
+      <div class="col-12"><label class="form-label small fw-semibold">Title (optional)</label>
+        <input class="form-control" name="title" placeholder="Auto-filled from the ${UI.esc(opts.scope || 'task')} if left blank"></div>
+    </form></div>
+    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+      <button class="btn btn-primary" id="issueCertBtn">Issue &amp; open</button></div>`);
+  UI.el('issueCertBtn').onclick = async () => {
+    const f = UI.el('certForm'); if (!f.reportValidity()) return;
+    const payload = Object.fromEntries(new FormData(f).entries());
+    payload.scope = opts.scope || 'task'; payload.scopeId = opts.scopeId || '';
+    payload.issuedBy = (QRAMS.getUser() || {}).name || '';
+    try { const cert = await Api.issueCertificate(payload); UI.closeModal(); UI.toast('Certificate issued.'); Router.go('#/cert/' + cert.token); }
+    catch (e) { UI.toast(e.message, 'danger'); }
+  };
+}
+
+async function renderCertificate(token) {
+  UI.loading('Loading certificate…');
+  try {
+    const cert = await Api.getCertificate(token);
+    if (!cert) throw new Error('Certificate not found.');
+    const school = (UI.el('schoolBadge') || {}).textContent || 'Our School';
+    const verifyUrl = QRAMS.getApiUrl() + '?cert=' + encodeURIComponent(cert.token);
+    const revoked = cert.status !== 'Valid';
+    UI.view().innerHTML = `
+      <div class="no-print mb-3 d-flex gap-2 align-items-center">
+        <button class="btn btn-sm btn-ghost" onclick="history.back()"><i class="bi bi-arrow-left me-1"></i>Back</button>
+        <button class="btn btn-sm btn-primary ms-auto" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print / Save PDF</button>
+        ${revoked ? '' : `<button class="btn btn-sm btn-outline-danger" onclick="revokeCert('${UI.esc(cert.token)}')"><i class="bi bi-x-octagon me-1"></i>Revoke</button>`}
+      </div>
+      ${revoked ? '<div class="alert alert-danger no-print">This certificate has been revoked — its verify QR now shows “not valid”.</div>' : ''}
+      <div class="certificate"><div class="cert-frame">
+        <div class="cert-title">Certificate of Achievement</div>
+        <div class="cert-sub mt-3">This is proudly presented to</div>
+        <div class="cert-name">${UI.esc(cert.entityName)}</div>
+        <div class="cert-sub">${UI.esc(cert.title)}</div>
+        <div class="cert-foot">
+          <div class="text-start"><div class="cert-sign">${UI.esc(cert.issuedBy || 'Teacher')}<div class="small">Issued ${UI.date(cert.issuedAt)}</div></div></div>
+          <div class="cert-qr text-center"><img src="${QRGen.pngDataUrl(verifyUrl, 180)}" alt="verify">
+            <div class="text-muted" style="font-size:.6rem">Scan to verify · ${UI.esc(cert.certId)}</div></div>
+          <div class="text-end"><div class="cert-sign">${UI.esc(school)}<div class="small">${UI.esc(cert.scope)} award</div></div></div>
+        </div>
+      </div></div>`;
+  } catch (err) { UI.error(err.message); }
+}
+async function revokeCert(token) {
+  if (!confirm('Revoke this certificate? Its verify QR will then show “not valid”.')) return;
+  try { await Api.revokeCertificate(token); UI.toast('Certificate revoked.'); renderCertificate(token); }
+  catch (e) { UI.toast(e.message, 'danger'); }
 }

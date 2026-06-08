@@ -1,5 +1,5 @@
 {
-  "name": "QRAMS — QR Task Splitter & Tracking",
+  "name": "QRAMS — QR Assignment Management System",
   "short_name": "QRAMS",
   "description": "Split one task link into many tracked QR codes for pupils, groups and classes.",
   "start_url": "./index.html",

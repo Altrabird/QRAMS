@@ -105,6 +105,13 @@ function deviceFromUA(ua) {
   return 'desktop';
 }
 
+/** Escape a string for safe insertion into HTML (used by the redirect/verify pages). */
+function escapeHtml(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /** Simple non-cryptographic hash for PINs (good enough for a school kiosk). */
 function hashPin(pin) {
   var raw = Utilities.computeDigest(

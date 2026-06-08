@@ -105,6 +105,33 @@ body{ background:var(--app-bg); }
 .table-sm td,.table-sm th{ vertical-align:middle; }
 .cursor-pointer{ cursor:pointer; }
 
+/* ---------- Phase 2: gamification menu (hidden until enabled) ---------- */
+.gami-only{ display:none !important; }
+body.gami-on .gami-only{ display:flex !important; }
+
+/* badge chips */
+.badge-chip{ display:inline-flex;align-items:center;gap:6px;padding:.34rem .6rem;border:1px solid var(--line);
+  border-radius:999px;font-size:.8rem;background:var(--surface-2);margin:.15rem; }
+.badge-chip .ico{ font-size:1.05rem; }
+.badge-chip code{ background:transparent;color:var(--bs-secondary-color); }
+
+/* leaderboard + points */
+.lb-rank{ font-weight:800;width:2.2rem;text-align:center;font-size:1.05rem; }
+.pts{ font-weight:800;color:var(--brand-2); }
+
+/* ---------- Certificate ---------- */
+.certificate{
+  background:#fff;color:#0f172a;border:2px solid var(--brand);border-radius:18px;
+  padding:26px;max-width:900px;margin:0 auto;box-shadow:0 20px 60px rgba(2,6,23,.15);
+}
+.certificate .cert-frame{ border:3px double #cbd5e1;border-radius:12px;padding:38px 30px;text-align:center; }
+.certificate .cert-title{ font-size:1rem;letter-spacing:.3em;text-transform:uppercase;color:var(--brand);font-weight:700; }
+.certificate .cert-name{ font-size:2.4rem;font-weight:800;margin:.35em 0;font-family:Georgia,'Times New Roman',serif;color:#0f172a; }
+.certificate .cert-sub{ color:#475569;font-size:1.05rem; }
+.certificate .cert-foot{ display:flex;justify-content:space-between;align-items:flex-end;margin-top:40px;gap:20px; }
+.certificate .cert-qr img{ width:96px;height:96px; }
+.certificate .cert-sign{ border-top:1px solid #94a3b8;padding-top:6px;min-width:160px;font-size:.85rem;color:#475569; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 991.98px){
   .sidebar{ transform:translateX(-100%); }
@@ -120,5 +147,7 @@ body{ background:var(--app-bg); }
   .content{ padding:0;max-width:none; }
   .qr-grid{ grid-template-columns:repeat(3,1fr); }
   body{ background:#fff; }
+  /* Certificate prints full-bleed on its own page */
+  .certificate{ box-shadow:none;max-width:none;width:100%;border-width:2px; }
 }
 @page{ size:A4;margin:12mm; }

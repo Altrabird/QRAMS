@@ -43,6 +43,23 @@ function saveCampaign(payload) {
   return camp;
 }
 
+/** One campaign plus a rollup (its tasks, how many QR codes, % completed). */
+function getCampaign(campaignId) {
+  var c = findOne(SHEETS.CAMPAIGNS, 'campaignId', campaignId);
+  if (!c) throw new Error('Campaign not found.');
+  var tasks = listTasks().filter(function (t) { return String(t.campaignId) === String(campaignId); });
+  var inCampaign = {};
+  tasks.forEach(function (t) { inCampaign[t.taskId] = true; });
+  var qrs = readAll(SHEETS.QR_CODES).filter(function (q) { return inCampaign[q.taskId]; });
+  var done = qrs.filter(function (q) { return q.progress === 'Completed'; }).length;
+  c.tasks = tasks;
+  c.stats = {
+    tasks: tasks.length, qrCodes: qrs.length, completed: done,
+    completionRate: qrs.length ? Math.round((done / qrs.length) * 100) : 0,
+  };
+  return c;
+}
+
 /* ============================== 2. TASKS ============================== */
 
 function listTasks() { return readAll(SHEETS.TASKS); }
@@ -292,6 +309,16 @@ function handleScan(token, userAgent) {
       userAgent: clean(userAgent).slice(0, 300), action: 'scan',
     });
 
+    // Gamification side-effects — only when the school has switched it on.
+    // Kept after the redirect-critical work so a slow ledger write never
+    // delays the pupil (and it's skipped entirely when the flag is off).
+    if (isGamificationOn()) {
+      if (patch.progress === 'Completed' && qr.progress !== 'Completed') {
+        awardPoints(qr.entityId, qr.taskId, Number(task.pointsValue) || 0, 'task:' + qr.taskId);
+      }
+      checkBadges(qr.entityId); // also catches the 'first_scan' badge
+    }
+
     invalidateDashboard();
     return link;
   } catch (err) {
@@ -309,6 +336,7 @@ function markComplete(payload) {
   if (!qr) throw new Error('QR not found.');
   var task = getTask(qr.taskId) || {};
   var now = nowIso();
+  var wasCompleted = String(qr.progress) === 'Completed';
 
   updateWhere(SHEETS.QR_CODES, 'token', payload.token, {
     progress: 'Completed', completedAt: now,
@@ -322,6 +350,15 @@ function markComplete(payload) {
     durationSec: Number(payload.durationSec) || '', evidence: cleanUrl(payload.evidence),
     reviewedBy: clean(payload.reviewedBy), notes: clean(payload.notes), timestamp: now,
   });
+
+  // Award points + check badges once (only if newly completed and gamification is on).
+  if (isGamificationOn()) {
+    if (!wasCompleted) {
+      awardPoints(qr.entityId, qr.taskId, Number(task.pointsValue) || 0, 'task:' + qr.taskId + ' (manual)');
+    }
+    checkBadges(qr.entityId);
+  }
+
   invalidateDashboard();
   return getQR(payload.token);
 }
@@ -445,6 +482,8 @@ function getSettings() {
 }
 
 function saveSetting(key, value) {
+  // If the gamification switch changed, drop its cached value immediately.
+  if (key === 'gamificationEnabled') CacheService.getScriptCache().remove('gamiOn');
   var existing = findOne(SHEETS.SETTINGS, 'key', key);
   if (existing) return updateWhere(SHEETS.SETTINGS, 'key', key, { value: clean(value), updatedAt: nowIso() });
   return appendRow(SHEETS.SETTINGS, { key: clean(key), value: clean(value), updatedAt: nowIso() });

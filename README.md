@@ -1,4 +1,4 @@
-# QRAMS — QR Task Splitter & Tracking System
+# QRAMS — QR Assignment Management System
 
 Split **one** master task link into **many unique QR codes** — one per pupil, group,
 class or event — then track every scan and completion live, all stored in

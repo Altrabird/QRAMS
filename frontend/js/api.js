@@ -53,6 +53,16 @@ const Api = {
   getQRDetail(qrToken) { return this._get('getQRDetail', { qrToken }); },
   getSettings() { return this._get('getSettings'); },
 
+  // ---- Phase 2 reads ----
+  getCampaign(campaignId) { return this._get('getCampaign', { campaignId }); },
+  leaderboard(className) { return this._get('leaderboard', className ? { className } : {}); },
+  listBadges() { return this._get('listBadges'); },
+  getStudentBadges(entityId) { return this._get('getStudentBadges', { entityId }); },
+  getStudentPoints(entityId) { return this._get('getStudentPoints', { entityId }); },
+  listRewards() { return this._get('listRewards'); },
+  listCertificates(scopeId) { return this._get('listCertificates', scopeId ? { scopeId } : {}); },
+  getCertificate(certToken) { return this._get('getCertificate', { certToken }); },
+
   // ---- Writes ----
   saveTask(task) { return this._post('saveTask', task); },
   setTaskStatus(taskId, status) { return this._post('setTaskStatus', { taskId, status }); },
@@ -65,4 +75,12 @@ const Api = {
   regenerateQR(qrToken) { return this._post('regenerateQR', { qrToken }); },
   markComplete(payload) { return this._post('markComplete', payload); },
   saveSetting(key, value) { return this._post('saveSetting', { key, value }); },
+
+  // ---- Phase 2 writes ----
+  saveBadge(badge) { return this._post('saveBadge', badge); },
+  awardPoints(payload) { return this._post('awardPoints', payload); },
+  saveReward(reward) { return this._post('saveReward', reward); },
+  redeemReward(payload) { return this._post('redeemReward', payload); },
+  issueCertificate(payload) { return this._post('issueCertificate', payload); },
+  revokeCertificate(certToken) { return this._post('revokeCertificate', { certToken }); },
 };
