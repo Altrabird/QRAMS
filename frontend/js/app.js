@@ -561,10 +561,10 @@ function renderImport() {
   UI.view().innerHTML = `
     <div class="row g-3"><div class="col-lg-7"><div class="card p-3">
       <div class="section-head"><h2>Bulk import students</h2></div>
-      <p class="small text-secondary">Paste CSV or upload a <code>.csv</code> file. Columns (header row):
-        <code>name, studentId, className, group, gender, notes</code>. Only <b>name</b> is required.</p>
+      <p class="small text-secondary">Paste CSV or upload a <code>.csv</code> file. You only need two columns (header row):
+        <code>name, className</code>. IDs are generated automatically, and you can sort pupils into groups afterwards on the Students page.</p>
       <input type="file" class="form-control mb-2" id="csvFile" accept=".csv,text/csv">
-      <textarea class="form-control mb-2" id="csvText" rows="9" placeholder="name,studentId,className,group&#10;Ahmad Ali,,3 Cerdik,Group A&#10;Siti,,3 Cerdik,Group B"></textarea>
+      <textarea class="form-control mb-2" id="csvText" rows="9" placeholder="name,className&#10;Ahmad bin Ali,3 Cerdik&#10;Siti Nurhaliza,3 Cerdik&#10;Mei Ling,3 Bijak"></textarea>
       <div class="d-flex gap-2">
         <button class="btn btn-outline-secondary btn-sm" id="previewBtn"><i class="bi bi-eye me-1"></i>Preview</button>
         <button class="btn btn-primary btn-sm" id="importBtn"><i class="bi bi-upload me-1"></i>Import</button>
@@ -598,8 +598,8 @@ function previewCsv() {
   UI.el('importPreview').innerHTML = rows.length
     ? `<div class="mb-2"><span class="badge text-bg-success">${valid.length} valid</span>
         ${rows.length - valid.length ? `<span class="badge text-bg-warning ms-1">${rows.length - valid.length} missing name</span>` : ''}</div>
-       <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Name</th><th>Class</th><th>Group</th></tr></thead>
-       <tbody>${valid.slice(0, 12).map(r => `<tr><td>${UI.esc(r.name)}</td><td>${UI.esc(r.className)}</td><td>${UI.esc(r.group)}</td></tr>`).join('')}</tbody></table></div>
+       <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Name</th><th>Class</th></tr></thead>
+       <tbody>${valid.slice(0, 12).map(r => `<tr><td>${UI.esc(r.name)}</td><td>${UI.esc(r.className)}</td></tr>`).join('')}</tbody></table></div>
        ${valid.length > 12 ? `<div class="small text-secondary">…and ${valid.length - 12} more</div>` : ''}`
     : '<span class="text-danger">No rows found.</span>';
 }
