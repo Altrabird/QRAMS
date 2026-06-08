@@ -462,6 +462,7 @@ async function renderStudents() {
           <span class="small text-secondary"><b id="selCount">0</b> selected</span>
           <select class="form-select form-select-sm" id="bulkGroup" style="max-width:210px">${groupOptions('')}</select>
           <button class="btn btn-sm btn-primary" id="bulkAssignBtn"><i class="bi bi-people-fill me-1"></i>Assign selected</button>
+          <button class="btn btn-sm btn-outline-danger ms-auto" id="bulkDeleteBtn"><i class="bi bi-trash me-1"></i>Delete selected</button>
         </div>
         <div class="table-responsive"><table class="table table-hover align-middle mb-0">
           <thead><tr><th style="width:34px"><input type="checkbox" class="form-check-input" id="selAll" title="Select all"></th>
@@ -494,6 +495,15 @@ async function renderStudents() {
       const ids = [...document.querySelectorAll('.selStu:checked')].map(c => c.value);
       if (!ids.length) return UI.toast('Tick at least one student first.', 'warning');
       try { const r = await Api.assignGroup(ids, UI.el('bulkGroup').value); UI.toast(`Assigned ${r.assigned} student(s).`); renderStudents(); }
+      catch (err) { UI.toast(err.message, 'danger'); }
+    };
+
+    // Bulk delete (checked rows)
+    if (UI.el('bulkDeleteBtn')) UI.el('bulkDeleteBtn').onclick = async () => {
+      const ids = [...document.querySelectorAll('.selStu:checked')].map(c => c.value);
+      if (!ids.length) return UI.toast('Tick at least one student first.', 'warning');
+      if (!confirm('Delete ' + ids.length + ' selected student(s)?\n\nThis cannot be undone.')) return;
+      try { const r = await Api.deleteStudents(ids); UI.toast(`Deleted ${r.deleted} student(s).`); renderStudents(); }
       catch (err) { UI.toast(err.message, 'danger'); }
     };
   } catch (err) { UI.error(err.message); }

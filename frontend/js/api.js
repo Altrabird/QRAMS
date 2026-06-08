@@ -90,6 +90,7 @@ const Api = {
   // ---- Deletions ----
   deleteTask(taskId) { return this._post('deleteTask', { taskId }); },
   deleteStudent(studentId) { return this._post('deleteStudent', { studentId }); },
+  deleteStudents(studentIds) { return this._post('deleteStudents', { studentIds }); },
   deleteQR(qrToken) { return this._post('deleteQR', { qrToken }); },
   deleteCampaign(campaignId) { return this._post('deleteCampaign', { campaignId }); },
   deleteBadge(badgeId) { return this._post('deleteBadge', { badgeId }); },

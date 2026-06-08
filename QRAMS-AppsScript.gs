@@ -461,6 +461,29 @@ function deleteAllWhere(name, keyCol, keyVal) {
   });
 }
 
+/** Delete every row whose keyCol value is in `values` (one rewrite). Returns count. */
+function deleteManyWhere(name, keyCol, values) {
+  if (!values || !values.length) return 0;
+  var set = {}; values.forEach(function (v) { set[String(v)] = true; });
+  return withLock(function () {
+    var sh = getSheet(name);
+    var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+    if (lastRow < 2) return 0;
+    var rows = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    var idx = rows[0].indexOf(keyCol);
+    if (idx === -1) throw new Error('Column "' + keyCol + '" not in ' + name);
+    var keep = [rows[0]], removed = 0;
+    for (var r = 1; r < rows.length; r++) {
+      if (set[String(rows[r][idx])]) removed++;
+      else keep.push(rows[r]);
+    }
+    if (removed === 0) return 0;
+    sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+    if (keep.length > 1) sh.getRange(1, 1, keep.length, lastCol).setValues(keep);
+    return removed;
+  });
+}
+
 /**
  * Run a function while holding the script lock. Prevents two concurrent scans
  * from corrupting scanCount or writing duplicate rows.
@@ -1109,6 +1132,14 @@ function deleteStudent(studentId) {
   if (!findOne(SHEETS.STUDENTS, 'studentId', studentId)) throw new Error('Student not found.');
   deleteWhere(SHEETS.STUDENTS, 'studentId', studentId);
   return { deleted: studentId };
+}
+
+/** Bulk-delete many students in one go (from the Students page selection). */
+function deleteStudents(ids) {
+  if (!ids || !ids.length) throw new Error('No students selected.');
+  var n = deleteManyWhere(SHEETS.STUDENTS, 'studentId', ids);
+  invalidateDashboard();
+  return { deleted: n };
 }
 
 /** Delete one QR code and its scan + completion history. */
@@ -1923,6 +1954,7 @@ function routePost(action, b) {
     // Deletions (destructive; admin/teacher only, confirmed in the UI)
     case 'deleteTask':        requireRole(b.token, WRITERS); return deleteTask(b.taskId);
     case 'deleteStudent':     requireRole(b.token, WRITERS); return deleteStudent(b.studentId);
+    case 'deleteStudents':    requireRole(b.token, WRITERS); return deleteStudents(b.studentIds);
     case 'deleteQR':          requireRole(b.token, WRITERS); return deleteQR(b.qrToken);
     case 'deleteCampaign':    requireRole(b.token, WRITERS); return deleteCampaign(b.campaignId);
     case 'deleteBadge':       requireRole(b.token, WRITERS); return deleteBadge(b.badgeId);

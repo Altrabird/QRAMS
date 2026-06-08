@@ -135,6 +135,7 @@ function routePost(action, b) {
     // Deletions (destructive; admin/teacher only, confirmed in the UI)
     case 'deleteTask':        requireRole(b.token, WRITERS); return deleteTask(b.taskId);
     case 'deleteStudent':     requireRole(b.token, WRITERS); return deleteStudent(b.studentId);
+    case 'deleteStudents':    requireRole(b.token, WRITERS); return deleteStudents(b.studentIds);
     case 'deleteQR':          requireRole(b.token, WRITERS); return deleteQR(b.qrToken);
     case 'deleteCampaign':    requireRole(b.token, WRITERS); return deleteCampaign(b.campaignId);
     case 'deleteBadge':       requireRole(b.token, WRITERS); return deleteBadge(b.badgeId);

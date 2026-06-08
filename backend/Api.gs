@@ -548,6 +548,14 @@ function deleteStudent(studentId) {
   return { deleted: studentId };
 }
 
+/** Bulk-delete many students in one go (from the Students page selection). */
+function deleteStudents(ids) {
+  if (!ids || !ids.length) throw new Error('No students selected.');
+  var n = deleteManyWhere(SHEETS.STUDENTS, 'studentId', ids);
+  invalidateDashboard();
+  return { deleted: n };
+}
+
 /** Delete one QR code and its scan + completion history. */
 function deleteQR(token) {
   if (!getQR(token)) throw new Error('QR not found.');
