@@ -83,4 +83,12 @@ const Api = {
   redeemReward(payload) { return this._post('redeemReward', payload); },
   issueCertificate(payload) { return this._post('issueCertificate', payload); },
   revokeCertificate(certToken) { return this._post('revokeCertificate', { certToken }); },
+
+  // ---- Deletions ----
+  deleteTask(taskId) { return this._post('deleteTask', { taskId }); },
+  deleteStudent(studentId) { return this._post('deleteStudent', { studentId }); },
+  deleteQR(qrToken) { return this._post('deleteQR', { qrToken }); },
+  deleteCampaign(campaignId) { return this._post('deleteCampaign', { campaignId }); },
+  deleteBadge(badgeId) { return this._post('deleteBadge', { badgeId }); },
+  deleteReward(rewardId) { return this._post('deleteReward', { rewardId }); },
 };

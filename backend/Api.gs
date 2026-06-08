@@ -488,3 +488,49 @@ function saveSetting(key, value) {
   if (existing) return updateWhere(SHEETS.SETTINGS, 'key', key, { value: clean(value), updatedAt: nowIso() });
   return appendRow(SHEETS.SETTINGS, { key: clean(key), value: clean(value), updatedAt: nowIso() });
 }
+
+/* ========================= DELETIONS ========================= */
+/* All destructive and admin/teacher-only (enforced in Code.gs); the frontend
+   always asks the user to confirm first. Cascades clean up child rows so the
+   database never keeps orphaned QR codes or logs. */
+
+/** Delete a task AND its QR codes, scan logs, completion logs and points. */
+function deleteTask(taskId) {
+  if (!findOne(SHEETS.TASKS, 'taskId', taskId)) throw new Error('Task not found.');
+  var qrCount = findWhere(SHEETS.QR_CODES, 'taskId', taskId).length;
+  deleteAllWhere(SHEETS.SCAN_LOGS, 'taskId', taskId);
+  deleteAllWhere(SHEETS.COMPLETION_LOGS, 'taskId', taskId);
+  deleteAllWhere(SHEETS.POINTS_LOG, 'taskId', taskId);
+  deleteAllWhere(SHEETS.QR_CODES, 'taskId', taskId);
+  deleteWhere(SHEETS.TASKS, 'taskId', taskId);
+  invalidateDashboard();
+  return { deleted: taskId, qrCodes: qrCount };
+}
+
+/** Delete one student (any QR codes they own stay intact and still scannable). */
+function deleteStudent(studentId) {
+  if (!findOne(SHEETS.STUDENTS, 'studentId', studentId)) throw new Error('Student not found.');
+  deleteWhere(SHEETS.STUDENTS, 'studentId', studentId);
+  return { deleted: studentId };
+}
+
+/** Delete one QR code and its scan + completion history. */
+function deleteQR(token) {
+  if (!getQR(token)) throw new Error('QR not found.');
+  deleteAllWhere(SHEETS.SCAN_LOGS, 'token', token);
+  deleteAllWhere(SHEETS.COMPLETION_LOGS, 'token', token);
+  deleteWhere(SHEETS.QR_CODES, 'token', token);
+  invalidateDashboard();
+  return { deleted: token };
+}
+
+/** Delete a campaign. Its tasks are kept but un-grouped (campaignId cleared). */
+function deleteCampaign(campaignId) {
+  if (!findOne(SHEETS.CAMPAIGNS, 'campaignId', campaignId)) throw new Error('Campaign not found.');
+  readAll(SHEETS.TASKS).forEach(function (t) {
+    if (String(t.campaignId) === String(campaignId)) updateWhere(SHEETS.TASKS, 'taskId', t.taskId, { campaignId: '' });
+  });
+  deleteWhere(SHEETS.CAMPAIGNS, 'campaignId', campaignId);
+  invalidateDashboard();
+  return { deleted: campaignId };
+}

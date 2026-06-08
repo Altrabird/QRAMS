@@ -127,6 +127,14 @@ function routePost(action, b) {
     case 'issueCertificate':  requireRole(b.token, WRITERS); return issueCertificate(b);
     case 'revokeCertificate': requireRole(b.token, WRITERS); return revokeCertificate(b.certToken);
 
+    // Deletions (destructive; admin/teacher only, confirmed in the UI)
+    case 'deleteTask':        requireRole(b.token, WRITERS); return deleteTask(b.taskId);
+    case 'deleteStudent':     requireRole(b.token, WRITERS); return deleteStudent(b.studentId);
+    case 'deleteQR':          requireRole(b.token, WRITERS); return deleteQR(b.qrToken);
+    case 'deleteCampaign':    requireRole(b.token, WRITERS); return deleteCampaign(b.campaignId);
+    case 'deleteBadge':       requireRole(b.token, WRITERS); return deleteBadge(b.badgeId);
+    case 'deleteReward':      requireRole(b.token, WRITERS); return deleteReward(b.rewardId);
+
     // Settings + users (admin only)
     case 'saveSetting':     requireRole(b.token, ['admin']); return saveSetting(b.key, b.value);
     case 'createUser':      return createUser(requireRole(b.token, ['admin']), b);

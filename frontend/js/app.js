@@ -267,6 +267,7 @@ function taskRow(t) {
       <a class="btn btn-sm btn-outline-primary" href="#/generator/${UI.esc(t.taskId)}" title="Generate QR"><i class="bi bi-qr-code"></i></a>
       <button class="btn btn-sm btn-outline-secondary" onclick="taskModal('${UI.esc(t.taskId)}')" title="Edit"><i class="bi bi-pencil"></i></button>
       <button class="btn btn-sm btn-outline-secondary" onclick="duplicateTask('${UI.esc(t.taskId)}')" title="Duplicate"><i class="bi bi-files"></i></button>
+      <button class="btn btn-sm btn-outline-danger" onclick="delTask('${UI.esc(t.taskId)}')" title="Delete"><i class="bi bi-trash"></i></button>
     </td></tr>`;
 }
 
@@ -423,19 +424,22 @@ async function doGenerate() {
 }
 
 /* ========================= STUDENTS ========================= */
+let _studentsCache = [];
 async function renderStudents() {
   UI.loading('Loading students…');
   try {
     const students = await Api.listStudents();
+    _studentsCache = students;
     UI.view().innerHTML = `
       <div class="section-head"><h2>Students</h2>
         <span class="badge text-bg-light">${students.length}</span>
         <a class="btn btn-outline-secondary btn-sm ms-auto" href="#/import"><i class="bi bi-upload me-1"></i>Bulk import</a>
         <button class="btn btn-primary btn-sm" onclick="studentModal()"><i class="bi bi-plus-lg me-1"></i>Add</button></div>
       ${students.length ? `<div class="card"><div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Group</th></tr></thead>
+        <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Group</th><th class="text-end">Actions</th></tr></thead>
         <tbody>${students.map(s => `<tr><td class="small text-secondary">${UI.esc(s.studentId)}</td>
-          <td class="fw-semibold">${UI.esc(s.name)}</td><td>${UI.esc(s.className)}</td><td>${UI.esc(s.groupId)}</td></tr>`).join('')}</tbody>
+          <td class="fw-semibold">${UI.esc(s.name)}</td><td>${UI.esc(s.className)}</td><td>${UI.esc(s.groupId)}</td>
+          <td class="text-end"><button class="btn btn-sm btn-outline-danger" onclick="delStudent('${UI.esc(s.studentId)}')" title="Delete"><i class="bi bi-trash"></i></button></td></tr>`).join('')}</tbody>
         </table></div></div>`
       : UI.emptyState('people', 'No students', 'Add students individually or import a CSV.',
           `<a class="btn btn-primary btn-sm" href="#/import">Bulk import</a>`)}`;
@@ -565,6 +569,7 @@ async function renderQRDetail(token) {
               <i class="bi bi-power me-1"></i>${qr.status === 'Disabled' ? 'Enable' : 'Disable'}</button>
             <button class="btn btn-sm btn-outline-danger" onclick="qrRegen('${UI.esc(token)}')"><i class="bi bi-arrow-repeat me-1"></i>Regenerate</button>
             <button class="btn btn-sm btn-outline-info" onclick="issueCertModal(${UI.esc(JSON.stringify({ scope: 'task', scopeId: qr.taskId, entityId: qr.entityId, entityName: qr.label }))})"><i class="bi bi-patch-check me-1"></i>Certificate</button>
+            <button class="btn btn-sm btn-outline-danger" onclick="delQR('${UI.esc(token)}','${UI.esc(qr.taskId)}')"><i class="bi bi-trash me-1"></i>Delete</button>
           </div>
           <div class="section-head"><h2>Scan history</h2></div>
           ${scans.length ? `<div class="table-responsive"><table class="table table-sm"><thead><tr><th>When</th><th>Device</th></tr></thead>
@@ -739,7 +744,8 @@ async function renderCampaignDetail(id) {
     UI.view().innerHTML = `
       <a href="#/campaigns" class="btn btn-sm btn-ghost mb-2"><i class="bi bi-arrow-left me-1"></i>Campaigns</a>
       <div class="section-head"><h2>${UI.esc(c.name)}</h2> ${UI.statusBadge(c.status)}
-        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="campaignModal('${UI.esc(c.campaignId)}')"><i class="bi bi-pencil me-1"></i>Edit</button></div>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="campaignModal('${UI.esc(c.campaignId)}')"><i class="bi bi-pencil me-1"></i>Edit</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="delCampaign('${UI.esc(c.campaignId)}')"><i class="bi bi-trash me-1"></i>Delete</button></div>
       <div class="row g-3 mb-3">
         ${statCard('list-check', 'tint-blue', s.tasks || 0, 'Tasks')}
         ${statCard('qr-code', 'tint-violet', s.qrCodes || 0, 'QR Codes')}
@@ -886,7 +892,7 @@ function rewardModal(id) {
       <div class="col-md-6"><label class="form-label small fw-semibold">Type</label><select class="form-select" name="type">${UI.options(QRAMS.ENUMS.rewardType, r.type || 'item')}</select></div>
       <div class="col-md-6"><label class="form-label small fw-semibold">Status</label><select class="form-select" name="status">${UI.options(['Active', 'Disabled'], r.status || 'Active')}</select></div>
     </form></div>
-    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveRewardBtn">Save</button></div>`);
+    <div class="modal-footer">${id ? `<button class="btn btn-outline-danger me-auto" onclick="delReward('${UI.esc(id)}')"><i class="bi bi-trash me-1"></i>Delete</button>` : ''}<button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveRewardBtn">Save</button></div>`);
   UI.el('saveRewardBtn').onclick = async () => {
     const f = UI.el('rewardForm'); if (!f.reportValidity()) return;
     const payload = Object.fromEntries(new FormData(f).entries()); if (id) payload.rewardId = id;
@@ -904,7 +910,7 @@ function badgeModal(id) {
         <input class="form-control" name="criteria" value="${UI.esc(b.criteria)}" placeholder="tasks:5">
         <div class="form-text"><code>first_scan</code> · <code>tasks:N</code> · <code>points:N</code> · <code>perfect_campaign</code></div></div>
     </form></div>
-    <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveBadgeBtn">Save</button></div>`);
+    <div class="modal-footer">${id ? `<button class="btn btn-outline-danger me-auto" onclick="delBadge('${UI.esc(id)}')"><i class="bi bi-trash me-1"></i>Delete</button>` : ''}<button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" id="saveBadgeBtn">Save</button></div>`);
   UI.el('saveBadgeBtn').onclick = async () => {
     const f = UI.el('badgeForm'); if (!f.reportValidity()) return;
     const payload = Object.fromEntries(new FormData(f).entries()); if (id) payload.badgeId = id;
@@ -972,5 +978,40 @@ async function renderCertificate(token) {
 async function revokeCert(token) {
   if (!confirm('Revoke this certificate? Its verify QR will then show “not valid”.')) return;
   try { await Api.revokeCertificate(token); UI.toast('Certificate revoked.'); renderCertificate(token); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+
+/* =========================== DELETE HANDLERS ===========================
+   Each asks for confirmation first (destructive, cannot be undone). */
+async function delTask(taskId) {
+  const t = _tasksCache.find(x => x.taskId === taskId) || {};
+  if (!confirm('Delete "' + (t.title || taskId) + '"?\n\nThis also removes ALL its QR codes and scan history, and cannot be undone.')) return;
+  try { const r = await Api.deleteTask(taskId); UI.toast('Task deleted' + (r.qrCodes ? ' (' + r.qrCodes + ' QR codes removed)' : '') + '.'); renderTasks(); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+async function delStudent(studentId) {
+  const s = _studentsCache.find(x => x.studentId === studentId) || {};
+  if (!confirm('Remove student "' + (s.name || studentId) + '"?')) return;
+  try { await Api.deleteStudent(studentId); UI.toast('Student removed.'); renderStudents(); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+async function delQR(token, taskId) {
+  if (!confirm('Delete this QR code and its scan history?\n\nThe printed code will stop working. This cannot be undone.')) return;
+  try { await Api.deleteQR(token); UI.toast('QR code deleted.'); Router.go('#/generator/' + (taskId || '')); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+async function delCampaign(campaignId) {
+  if (!confirm('Delete this campaign?\n\nIts tasks are kept (just un-grouped). This cannot be undone.')) return;
+  try { await Api.deleteCampaign(campaignId); UI.toast('Campaign deleted.'); Router.go('#/campaigns'); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+async function delBadge(badgeId) {
+  if (!confirm('Delete this badge?\n\nPupils who earned it will lose the record. This cannot be undone.')) return;
+  try { await Api.deleteBadge(badgeId); UI.closeModal(); UI.toast('Badge deleted.'); renderRewards(); }
+  catch (e) { UI.toast(e.message, 'danger'); }
+}
+async function delReward(rewardId) {
+  if (!confirm('Delete this reward?\n\nThis cannot be undone.')) return;
+  try { await Api.deleteReward(rewardId); UI.closeModal(); UI.toast('Reward deleted.'); renderRewards(); }
   catch (e) { UI.toast(e.message, 'danger'); }
 }

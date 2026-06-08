@@ -149,6 +149,30 @@ function deleteWhere(name, keyCol, keyVal) {
   });
 }
 
+/** Delete ALL rows where keyCol === keyVal in one efficient rewrite. Returns count. */
+function deleteAllWhere(name, keyCol, keyVal) {
+  return withLock(function () {
+    var sh = getSheet(name);
+    var lastRow = sh.getLastRow();
+    var lastCol = sh.getLastColumn();
+    if (lastRow < 2) return 0;
+    var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    var headers = values[0];
+    var keyIdx = headers.indexOf(keyCol);
+    if (keyIdx === -1) throw new Error('Column "' + keyCol + '" not in ' + name);
+    var keep = [headers];
+    var removed = 0;
+    for (var r = 1; r < values.length; r++) {
+      if (String(values[r][keyIdx]) === String(keyVal)) removed++;
+      else keep.push(values[r]);
+    }
+    if (removed === 0) return 0;
+    sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();          // wipe data rows
+    if (keep.length > 1) sh.getRange(1, 1, keep.length, lastCol).setValues(keep); // write survivors
+    return removed;
+  });
+}
+
 /**
  * Run a function while holding the script lock. Prevents two concurrent scans
  * from corrupting scanCount or writing duplicate rows.

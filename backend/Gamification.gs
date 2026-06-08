@@ -247,3 +247,18 @@ function redeemReward(payload) {
   awardPoints(entityId, '', -cost, 'reward:' + reward.rewardId + ' — ' + reward.name);
   return { entityId: entityId, spent: cost, balance: balance - cost, reward: reward.name };
 }
+
+/** Delete a badge definition and any "earned" records for it. */
+function deleteBadge(badgeId) {
+  if (!findOne(SHEETS.BADGES, 'badgeId', badgeId)) throw new Error('Badge not found.');
+  deleteWhere(SHEETS.BADGES, 'badgeId', badgeId);
+  deleteAllWhere(SHEETS.STUDENT_BADGES, 'badgeId', badgeId);
+  return { deleted: badgeId };
+}
+
+/** Delete a reward definition (past redemptions stay in the points ledger). */
+function deleteReward(rewardId) {
+  if (!findOne(SHEETS.REWARDS, 'rewardId', rewardId)) throw new Error('Reward not found.');
+  deleteWhere(SHEETS.REWARDS, 'rewardId', rewardId);
+  return { deleted: rewardId };
+}

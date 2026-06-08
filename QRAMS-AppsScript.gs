@@ -437,6 +437,30 @@ function deleteWhere(name, keyCol, keyVal) {
   });
 }
 
+/** Delete ALL rows where keyCol === keyVal in one efficient rewrite. Returns count. */
+function deleteAllWhere(name, keyCol, keyVal) {
+  return withLock(function () {
+    var sh = getSheet(name);
+    var lastRow = sh.getLastRow();
+    var lastCol = sh.getLastColumn();
+    if (lastRow < 2) return 0;
+    var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    var headers = values[0];
+    var keyIdx = headers.indexOf(keyCol);
+    if (keyIdx === -1) throw new Error('Column "' + keyCol + '" not in ' + name);
+    var keep = [headers];
+    var removed = 0;
+    for (var r = 1; r < values.length; r++) {
+      if (String(values[r][keyIdx]) === String(keyVal)) removed++;
+      else keep.push(values[r]);
+    }
+    if (removed === 0) return 0;
+    sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();          // wipe data rows
+    if (keep.length > 1) sh.getRange(1, 1, keep.length, lastCol).setValues(keep); // write survivors
+    return removed;
+  });
+}
+
 /**
  * Run a function while holding the script lock. Prevents two concurrent scans
  * from corrupting scanCount or writing duplicate rows.
@@ -1028,6 +1052,52 @@ function saveSetting(key, value) {
   return appendRow(SHEETS.SETTINGS, { key: clean(key), value: clean(value), updatedAt: nowIso() });
 }
 
+/* ========================= DELETIONS ========================= */
+/* All destructive and admin/teacher-only (enforced in Code.gs); the frontend
+   always asks the user to confirm first. Cascades clean up child rows so the
+   database never keeps orphaned QR codes or logs. */
+
+/** Delete a task AND its QR codes, scan logs, completion logs and points. */
+function deleteTask(taskId) {
+  if (!findOne(SHEETS.TASKS, 'taskId', taskId)) throw new Error('Task not found.');
+  var qrCount = findWhere(SHEETS.QR_CODES, 'taskId', taskId).length;
+  deleteAllWhere(SHEETS.SCAN_LOGS, 'taskId', taskId);
+  deleteAllWhere(SHEETS.COMPLETION_LOGS, 'taskId', taskId);
+  deleteAllWhere(SHEETS.POINTS_LOG, 'taskId', taskId);
+  deleteAllWhere(SHEETS.QR_CODES, 'taskId', taskId);
+  deleteWhere(SHEETS.TASKS, 'taskId', taskId);
+  invalidateDashboard();
+  return { deleted: taskId, qrCodes: qrCount };
+}
+
+/** Delete one student (any QR codes they own stay intact and still scannable). */
+function deleteStudent(studentId) {
+  if (!findOne(SHEETS.STUDENTS, 'studentId', studentId)) throw new Error('Student not found.');
+  deleteWhere(SHEETS.STUDENTS, 'studentId', studentId);
+  return { deleted: studentId };
+}
+
+/** Delete one QR code and its scan + completion history. */
+function deleteQR(token) {
+  if (!getQR(token)) throw new Error('QR not found.');
+  deleteAllWhere(SHEETS.SCAN_LOGS, 'token', token);
+  deleteAllWhere(SHEETS.COMPLETION_LOGS, 'token', token);
+  deleteWhere(SHEETS.QR_CODES, 'token', token);
+  invalidateDashboard();
+  return { deleted: token };
+}
+
+/** Delete a campaign. Its tasks are kept but un-grouped (campaignId cleared). */
+function deleteCampaign(campaignId) {
+  if (!findOne(SHEETS.CAMPAIGNS, 'campaignId', campaignId)) throw new Error('Campaign not found.');
+  readAll(SHEETS.TASKS).forEach(function (t) {
+    if (String(t.campaignId) === String(campaignId)) updateWhere(SHEETS.TASKS, 'taskId', t.taskId, { campaignId: '' });
+  });
+  deleteWhere(SHEETS.CAMPAIGNS, 'campaignId', campaignId);
+  invalidateDashboard();
+  return { deleted: campaignId };
+}
+
 
 
 /* ==========================================================================
@@ -1281,6 +1351,21 @@ function redeemReward(payload) {
 
   awardPoints(entityId, '', -cost, 'reward:' + reward.rewardId + ' — ' + reward.name);
   return { entityId: entityId, spent: cost, balance: balance - cost, reward: reward.name };
+}
+
+/** Delete a badge definition and any "earned" records for it. */
+function deleteBadge(badgeId) {
+  if (!findOne(SHEETS.BADGES, 'badgeId', badgeId)) throw new Error('Badge not found.');
+  deleteWhere(SHEETS.BADGES, 'badgeId', badgeId);
+  deleteAllWhere(SHEETS.STUDENT_BADGES, 'badgeId', badgeId);
+  return { deleted: badgeId };
+}
+
+/** Delete a reward definition (past redemptions stay in the points ledger). */
+function deleteReward(rewardId) {
+  if (!findOne(SHEETS.REWARDS, 'rewardId', rewardId)) throw new Error('Reward not found.');
+  deleteWhere(SHEETS.REWARDS, 'rewardId', rewardId);
+  return { deleted: rewardId };
 }
 
 
@@ -1795,6 +1880,14 @@ function routePost(action, b) {
     case 'redeemReward':      requireRole(b.token, WRITERS); return redeemReward(b);
     case 'issueCertificate':  requireRole(b.token, WRITERS); return issueCertificate(b);
     case 'revokeCertificate': requireRole(b.token, WRITERS); return revokeCertificate(b.certToken);
+
+    // Deletions (destructive; admin/teacher only, confirmed in the UI)
+    case 'deleteTask':        requireRole(b.token, WRITERS); return deleteTask(b.taskId);
+    case 'deleteStudent':     requireRole(b.token, WRITERS); return deleteStudent(b.studentId);
+    case 'deleteQR':          requireRole(b.token, WRITERS); return deleteQR(b.qrToken);
+    case 'deleteCampaign':    requireRole(b.token, WRITERS); return deleteCampaign(b.campaignId);
+    case 'deleteBadge':       requireRole(b.token, WRITERS); return deleteBadge(b.badgeId);
+    case 'deleteReward':      requireRole(b.token, WRITERS); return deleteReward(b.rewardId);
 
     // Settings + users (admin only)
     case 'saveSetting':     requireRole(b.token, ['admin']); return saveSetting(b.key, b.value);
