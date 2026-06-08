@@ -13,18 +13,36 @@ const MatrixRain = {
   chars: 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789QRAMS</>{}'.split(''),
 
   start() {
-    // Respect users who get motion sick — leave just the dark background.
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     this.canvas = document.getElementById('matrixRain');
     if (!this.canvas) return;
     this.ctx = this.canvas.getContext('2d');
     this.resize();
+    this.canvas.style.display = 'block';
+    // Respect motion-sensitive users: draw ONE static "frozen rain" field, no loop.
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this._drawStatic();
+      return;
+    }
     this._onResize = () => this.resize();
     this._onVis = () => { document.hidden ? this._pause() : this._run(); };
     window.addEventListener('resize', this._onResize);
     document.addEventListener('visibilitychange', this._onVis);
-    this.canvas.style.display = 'block';
     this._run();
+  },
+
+  /* A single non-animated frame for reduced-motion devices (still looks Matrix-y). */
+  _drawStatic() {
+    const c = this.ctx, w = this.canvas.width, h = this.canvas.height;
+    c.fillStyle = '#02060a'; c.fillRect(0, 0, w, h);
+    c.font = this.fontSize + "px 'Courier New', monospace";
+    const rows = Math.max(1, Math.floor(h / this.fontSize));
+    for (let i = 0; i < this.drops.length; i++) {
+      const len = 4 + ((Math.random() * rows) | 0);
+      for (let k = 0; k < len; k++) {
+        c.fillStyle = k === len - 1 ? '#d6ffe0' : 'rgba(25,195,74,' + (0.12 + Math.random() * 0.4).toFixed(2) + ')';
+        c.fillText(this.chars[(Math.random() * this.chars.length) | 0], i * this.fontSize, k * this.fontSize);
+      }
+    }
   },
 
   stop() {

@@ -167,11 +167,12 @@ html.matrix{
   --line:#0d3b1e; --side-bg:rgba(2,10,5,.92); --side-fg:#7fffa6; --side-active:#0d3b1e;
   color:#c8facc;
 }
-html.matrix body{ background:#02060a; }
+html.matrix body{ background:radial-gradient(1100px 700px at 50% -8%, rgba(16,185,90,.10), transparent 60%), #02060a; }
 
-/* keep all real content above the rain canvas */
-html.matrix .sidebar, html.matrix .main, html.matrix .topbar,
-html.matrix .login-wrap, html.matrix .toast-container, html.matrix .modal{ position:relative; z-index:1; }
+/* Lift page content above the rain canvas. Sidebar/topbar/modals/toasts are
+   already fixed or sticky (so above it) — only the main + login containers need
+   positioning, otherwise the rain would paint over their content. */
+html.matrix .main, html.matrix .login-wrap{ position:relative; z-index:1; }
 html.matrix .login-wrap{ background:transparent; }
 
 /* terminal / monospace feel */

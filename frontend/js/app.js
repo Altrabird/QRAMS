@@ -680,26 +680,61 @@ let _campaignList = [];
 async function renderCampaigns() {
   UI.loading('Loading campaigns…');
   try {
-    _campaignList = await Api.listCampaigns();
+    const [camps, tasks, qrs] = await Promise.all([Api.listCampaigns(), Api.listTasks(), Api.listQRCodes()]);
+    _campaignList = camps;
+
+    // Roll up tasks + QR completion per campaign (one pass each).
+    const campOfTask = {}; tasks.forEach(t => { campOfTask[t.taskId] = t.campaignId || ''; });
+    const stat = {}; camps.forEach(c => { stat[c.campaignId] = { tasks: 0, qr: 0, done: 0, rate: 0 }; });
+    tasks.forEach(t => { if (stat[t.campaignId]) stat[t.campaignId].tasks++; });
+    qrs.forEach(q => { const cid = campOfTask[q.taskId]; if (stat[cid]) { stat[cid].qr++; if (q.progress === 'Completed') stat[cid].done++; } });
+    Object.keys(stat).forEach(k => { const s = stat[k]; s.rate = s.qr ? Math.round(s.done / s.qr * 100) : 0; });
+
+    const activeCount = camps.filter(c => c.status === 'Active').length;
+    const totalQr = qrs.length, totalDone = qrs.filter(q => q.progress === 'Completed').length;
+    const overallRate = totalQr ? Math.round(totalDone / totalQr * 100) : 0;
+
     UI.view().innerHTML = `
       <div class="section-head"><h2>Campaigns</h2>
         <button class="btn btn-primary btn-sm ms-auto" onclick="campaignModal()"><i class="bi bi-plus-lg me-1"></i>New Campaign</button></div>
-      ${_campaignList.length
-        ? `<div class="row g-3">${_campaignList.map(campaignCard).join('')}</div>`
+      <div class="row g-3">
+        ${miniStatCard('collection', 'tint-violet', camps.length, 'Campaigns')}
+        ${miniStatCard('play-circle', 'tint-green', activeCount, 'Active')}
+        ${miniStatCard('list-check', 'tint-blue', tasks.length, 'Total Tasks')}
+        ${miniStatCard('percent', 'tint-amber', overallRate + '%', 'Avg Completion')}
+      </div>
+      <div class="section-head mt-4"><h2 class="h6 text-secondary mb-0">All campaigns</h2></div>
+      ${camps.length
+        ? `<div class="row g-3">${camps.map(c => campaignCard(c, stat[c.campaignId])).join('')}</div>`
         : UI.emptyState('collection', 'No campaigns yet', 'Group related tasks under a campaign (e.g. “English Week”).',
             `<button class="btn btn-primary btn-sm" onclick="campaignModal()">New Campaign</button>`)}`;
   } catch (err) { UI.error(err.message); }
 }
-function campaignCard(c) {
+function miniStatCard(icon, tint, value, label) {
+  return `<div class="col-6 col-md-3"><div class="card stat-card">
+    <div class="stat-icon ${tint}"><i class="bi bi-${icon}"></i></div>
+    <div class="stat-value">${UI.esc(value)}</div><div class="stat-label">${UI.esc(label)}</div></div></div>`;
+}
+function campaignCard(c, st) {
+  st = st || { tasks: 0, qr: 0, done: 0, rate: 0 };
   return `<div class="col-md-6 col-xl-4"><div class="card p-3 h-100 cursor-pointer" onclick="Router.go('#/campaign/${UI.esc(c.campaignId)}')">
-    <div class="d-flex align-items-start gap-2">
+    <div class="d-flex align-items-start gap-2 mb-2">
       <div class="stat-icon tint-violet"><i class="bi bi-collection"></i></div>
       <div class="flex-fill"><div class="fw-bold">${UI.esc(c.name)}</div>
         <div class="small text-secondary">${UI.esc(c.subject || '—')}</div></div>
       ${UI.statusBadge(c.status)}
     </div>
-    <p class="small text-secondary mt-2 mb-1">${UI.esc((c.description || '').slice(0, 90))}</p>
-    <div class="small text-secondary"><i class="bi bi-calendar3 me-1"></i>${UI.date(c.startDate)} → ${UI.date(c.endDate)}</div>
+    <p class="small text-secondary mb-2">${UI.esc((c.description || '').slice(0, 80)) || 'No description'}</p>
+    <div class="d-flex flex-wrap gap-3 small mb-2">
+      <span><i class="bi bi-list-check me-1"></i>${st.tasks} tasks</span>
+      <span><i class="bi bi-qr-code me-1"></i>${st.qr} QR</span>
+      <span><i class="bi bi-check2-circle me-1"></i>${st.done} done</span>
+    </div>
+    <div class="progress" style="height:6px;background:rgba(127,255,166,.12)"><div class="progress-bar bg-success" style="width:${st.rate}%"></div></div>
+    <div class="d-flex justify-content-between small text-secondary mt-1">
+      <span><i class="bi bi-calendar3 me-1"></i>${UI.date(c.startDate)} → ${UI.date(c.endDate)}</span>
+      <span class="fw-semibold">${st.rate}%</span>
+    </div>
   </div></div>`;
 }
 function campaignModal(id) {
