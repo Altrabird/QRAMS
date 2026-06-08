@@ -14,21 +14,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function initTheme() {
-  const t = localStorage.getItem(QRAMS.KEYS.THEME) || 'light';
-  document.documentElement.setAttribute('data-bs-theme', t);
+const THEMES = ['matrix', 'light', 'dark']; // cycle order (Matrix is the default look)
+function initTheme() { applyTheme(localStorage.getItem(QRAMS.KEYS.THEME) || 'matrix'); }
+
+/* Apply a theme. 'matrix' = Bootstrap's dark base + a green skin + the rain animation. */
+function applyTheme(t) {
+  const html = document.documentElement;
+  if (t === 'matrix') {
+    html.setAttribute('data-bs-theme', 'dark');
+    html.classList.add('matrix');
+    if (window.MatrixRain) MatrixRain.start();
+  } else {
+    html.setAttribute('data-bs-theme', t);
+    html.classList.remove('matrix');
+    if (window.MatrixRain) MatrixRain.stop();
+  }
+  localStorage.setItem(QRAMS.KEYS.THEME, t);
   updateThemeIcon(t);
 }
 function toggleTheme() {
-  const cur = document.documentElement.getAttribute('data-bs-theme');
-  const next = cur === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-bs-theme', next);
-  localStorage.setItem(QRAMS.KEYS.THEME, next);
-  updateThemeIcon(next);
+  const cur = localStorage.getItem(QRAMS.KEYS.THEME) || 'matrix';
+  applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
 }
 function updateThemeIcon(t) {
   const i = document.querySelector('#themeBtn i');
-  if (i) i.className = t === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars';
+  if (i) i.className = t === 'matrix' ? 'bi bi-terminal-fill' : (t === 'dark' ? 'bi bi-sun' : 'bi bi-moon-stars');
 }
 
 /* Wire global shell controls (run once). */
@@ -614,10 +624,12 @@ async function renderSettings() {
           <input class="form-check-input" type="checkbox" id="setGamify" ${settings.gamificationEnabled === 'true' ? 'checked' : ''}>
           <label class="form-check-label" for="setGamify">Enable gamification — points, badges, leaderboard &amp; rewards</label>
         </div>
-        <div class="form-check form-switch">
-          <input class="form-check-input" type="checkbox" id="setTheme" ${document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'checked' : ''}>
-          <label class="form-check-label" for="setTheme">Dark mode</label>
-        </div>
+        <label class="form-label small fw-semibold mt-2">Theme</label>
+        <select class="form-select" id="setThemeSelect">
+          <option value="matrix">Matrix (animated rain)</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
       </div></div>
       <div class="col-lg-6"><div class="card p-3">
         <div class="section-head"><h2><i class="bi bi-person me-1"></i>Account</h2></div>
@@ -650,7 +662,8 @@ async function renderSettings() {
       UI.toast(e.target.checked ? 'Gamification ON — Leaderboard & Rewards added to the menu.' : 'Gamification off.');
     } catch (err) { UI.toast(err.message, 'danger'); }
   };
-  UI.el('setTheme').onchange = toggleTheme;
+  const themeSel = UI.el('setThemeSelect');
+  if (themeSel) { themeSel.value = localStorage.getItem(QRAMS.KEYS.THEME) || 'matrix'; themeSel.onchange = (e) => applyTheme(e.target.value); }
 }
 
 /* =======================================================================

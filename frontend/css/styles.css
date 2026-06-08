@@ -151,3 +151,67 @@ body.gami-on .gami-only{ display:flex !important; }
   .certificate{ box-shadow:none;max-width:none;width:100%;border-width:2px; }
 }
 @page{ size:A4;margin:12mm; }
+
+/* =============================================================================
+   MATRIX THEME  (html.matrix)  — green "digital-rain" skin over the dark base.
+   Activated from app.js: it sets data-bs-theme="dark", adds .matrix, and runs
+   the rain canvas. Kept high-contrast so teachers can still read everything.
+   ============================================================================= */
+#matrixRain{
+  position:fixed; inset:0; width:100vw; height:100vh;
+  z-index:0; display:none; pointer-events:none;
+}
+html.matrix{
+  --brand:#19c34a; --brand-2:#39ff6a;
+  --app-bg:#02060a; --surface:rgba(6,20,10,.82); --surface-2:rgba(8,26,14,.7);
+  --line:#0d3b1e; --side-bg:rgba(2,10,5,.92); --side-fg:#7fffa6; --side-active:#0d3b1e;
+  color:#c8facc;
+}
+html.matrix body{ background:#02060a; }
+
+/* keep all real content above the rain canvas */
+html.matrix .sidebar, html.matrix .main, html.matrix .topbar,
+html.matrix .login-wrap, html.matrix .toast-container, html.matrix .modal{ position:relative; z-index:1; }
+html.matrix .login-wrap{ background:transparent; }
+
+/* terminal / monospace feel */
+html.matrix body, html.matrix .form-control, html.matrix .form-select,
+html.matrix .btn, html.matrix .table{ font-family:'Courier New', ui-monospace, SFMono-Regular, monospace; }
+
+/* glowing brand + key numbers */
+html.matrix .brand-text, html.matrix .topbar-title{ color:#39ff6a; text-shadow:0 0 8px rgba(57,255,106,.6); letter-spacing:.04em; }
+html.matrix .stat-value{ color:#39ff6a; text-shadow:0 0 10px rgba(57,255,106,.45); }
+html.matrix .text-secondary, html.matrix .stat-label, html.matrix small, html.matrix .small{ color:#73b88c !important; }
+
+/* frosted dark cards so text stays readable over the rain */
+html.matrix .card{
+  background:var(--surface); border-color:var(--line);
+  box-shadow:0 0 0 1px rgba(25,195,74,.15), 0 10px 34px rgba(0,0,0,.55);
+  backdrop-filter:blur(3px);
+}
+html.matrix .login-card{ box-shadow:0 0 40px rgba(25,195,74,.28); }
+html.matrix .topbar{ background:rgba(2,10,5,.55); border-bottom-color:var(--line); backdrop-filter:blur(8px); }
+html.matrix .sidebar{ border-right:1px solid var(--line); }
+
+/* navigation */
+html.matrix .sidebar-nav a{ color:#7fffa6; }
+html.matrix .sidebar-nav a:hover{ background:rgba(25,195,74,.12); color:#d6ffe0; }
+html.matrix .sidebar-nav a.active{
+  background:linear-gradient(135deg, rgba(25,195,74,.30), rgba(57,255,106,.12));
+  color:#d6ffe0; box-shadow:inset 0 0 14px rgba(25,195,74,.4);
+}
+
+/* controls */
+html.matrix .btn-primary{ background:#0c2f1a; border-color:#19c34a; color:#39ff6a; text-shadow:0 0 6px rgba(57,255,106,.5); }
+html.matrix .btn-primary:hover{ background:#124226; box-shadow:0 0 16px rgba(25,195,74,.5); }
+html.matrix .btn-outline-secondary, html.matrix .btn-ghost{ color:#9be8b4; border-color:var(--line); }
+html.matrix .form-control, html.matrix .form-select{ background:rgba(3,14,7,.85); border-color:var(--line); color:#d6ffe0; }
+html.matrix .form-control::placeholder{ color:#3f7a54; }
+html.matrix .form-control:focus, html.matrix .form-select:focus{ border-color:#19c34a; box-shadow:0 0 0 .2rem rgba(25,195,74,.25); }
+
+/* tables + misc */
+html.matrix .table{ --bs-table-color:#c8facc; --bs-table-bg:transparent; --bs-table-border-color:var(--line); }
+html.matrix .brand-img{ box-shadow:0 0 34px rgba(25,195,74,.5); }
+html.matrix .badge.text-bg-light{ background:#0d3b1e !important; color:#9be8b4 !important; }
+
+@media print{ #matrixRain{ display:none !important; } }

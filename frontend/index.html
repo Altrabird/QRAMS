@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>QRAMS — QR Assignment Management System</title>
   <meta name="description" content="Split one task link into many tracked QR codes for your pupils." />
-  <meta name="theme-color" content="#0e1d3c" />
+  <meta name="theme-color" content="#04140a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -23,6 +23,8 @@
   <link href="./css/styles.css" rel="stylesheet" />
 </head>
 <body>
+  <!-- Matrix theme: animated digital-rain backdrop (shown only when Matrix theme is on) -->
+  <canvas id="matrixRain" aria-hidden="true"></canvas>
 
   <!-- =================== LOGIN SCREEN =================== -->
   <div id="loginView" class="login-wrap d-none">
@@ -126,6 +128,7 @@
   <script src="./js/api.js"></script>
   <script src="./js/ui.js"></script>
   <script src="./js/qr.js"></script>
+  <script src="./js/matrix.js"></script>
   <script src="./js/app.js"></script>
 </body>
 </html>

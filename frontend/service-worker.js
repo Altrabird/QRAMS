@@ -5,7 +5,7 @@
        always go to network (data must be live; offline = graceful failure).
    Bump CACHE_VERSION whenever you change cached files to force an update.      */
 
-const CACHE_VERSION = 'qrams-v3';
+const CACHE_VERSION = 'qrams-v4';
 const SHELL = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const SHELL = [
   './js/api.js',
   './js/ui.js',
   './js/qr.js',
+  './js/matrix.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
