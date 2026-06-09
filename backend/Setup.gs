@@ -35,7 +35,7 @@ function setupDatabase() {
   return 'Setup complete: ' + Object.keys(SCHEMA).length + ' sheets ready.';
 }
 
-/** Create a sheet with headers if it doesn't exist; top-up headers if it does. */
+/** Create a sheet with headers if it doesn't exist; add any NEW columns if it does. */
 function ensureSheet(book, name, headers) {
   var sh = book.getSheetByName(name);
   if (!sh) {
@@ -44,6 +44,15 @@ function ensureSheet(book, name, headers) {
     sh.setFrozenRows(1);
     sh.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#1f2a44').setFontColor('#ffffff');
     sh.autoResizeColumns(1, headers.length);
+    return sh;
+  }
+  // Sheet already exists: append any schema columns that are missing (safe upgrade).
+  var lastCol = sh.getLastColumn();
+  var have = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+  var missing = headers.filter(function (h) { return have.indexOf(h) === -1; });
+  if (missing.length) {
+    sh.getRange(1, have.length + 1, 1, missing.length).setValues([missing])
+      .setFontWeight('bold').setBackground('#1f2a44').setFontColor('#ffffff');
   }
   return sh;
 }
@@ -53,6 +62,7 @@ function applyValidation(book) {
   addDropdown(book, SHEETS.CAMPAIGNS, 'status', ENUMS.campaignStatus);
   addDropdown(book, SHEETS.TASKS, 'status', ENUMS.taskStatus);
   addDropdown(book, SHEETS.TASKS, 'completionMode', ENUMS.completionMode);
+  addDropdown(book, SHEETS.TASKS, 'appType', ENUMS.appType);
   addDropdown(book, SHEETS.QR_CODES, 'status', ENUMS.qrStatus);
   addDropdown(book, SHEETS.QR_CODES, 'progress', ENUMS.progress);
   // Phase 2 columns

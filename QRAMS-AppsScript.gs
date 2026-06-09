@@ -72,6 +72,7 @@ const SHEETS = {
   // ---- Phase 2 (now live) ----
   STUDENT_BADGES: 'Student_Badges', // which pupil earned which badge (1 row each)
   CERTIFICATES: 'Certificates',     // issued, QR-verifiable certificates
+  TASK_APPS: 'Task_Apps',           // teacher-pasted quiz/app HTML that QRAMS hosts itself
 };
 
 /**
@@ -88,7 +89,7 @@ const SCHEMA = {
 
   Tasks: [
     'taskId', 'campaignId', 'title', 'description', 'subject', 'teacherName',
-    'dueDate', 'category', 'masterLink', 'completionMode', 'pointsValue',
+    'dueDate', 'category', 'masterLink', 'appType', 'completionMode', 'pointsValue',
     'status', 'createdAt', 'updatedAt',
   ],
 
@@ -99,7 +100,7 @@ const SCHEMA = {
   QR_Codes: [
     'token', 'taskId', 'entityType', 'entityId', 'label', 'className',
     'status', 'progress', 'firstScan', 'lastScan', 'scanCount',
-    'completedAt', 'points', 'remarks', 'createdAt',
+    'completedAt', 'points', 'score', 'maxScore', 'remarks', 'createdAt',
   ],
 
   Scan_Logs: [
@@ -109,7 +110,7 @@ const SCHEMA = {
 
   Completion_Logs: [
     'logId', 'token', 'taskId', 'entityId', 'method',
-    'status', 'durationSec', 'evidence', 'reviewedBy', 'notes', 'timestamp',
+    'status', 'score', 'maxScore', 'durationSec', 'evidence', 'reviewedBy', 'notes', 'timestamp',
   ],
 
   Settings: ['key', 'value', 'updatedAt'],
@@ -129,6 +130,10 @@ const SCHEMA = {
     'certId', 'token', 'entityId', 'entityName', 'scope', 'scopeId',
     'title', 'issuedBy', 'issuedAt', 'status',
   ],
+
+  // ---- Task output integration ----
+  // Quiz/app HTML pasted by a teacher that QRAMS hosts and serves itself.
+  Task_Apps: ['taskId', 'html', 'updatedAt'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -139,6 +144,7 @@ const ENUMS = {
   progress: ['Not Started', 'Opened', 'Started', 'In Progress', 'Submitted', 'Reviewed', 'Completed'],
   completionMode: ['auto', 'manual', 'form', 'quiz', 'evidence', 'time'],
   entityType: ['student', 'group', 'class', 'teacher', 'event', 'custom'],
+  appType: ['link', 'hosted'], // 'link' = external master link; 'hosted' = QRAMS serves the quiz
 
   // ---- Phase 2 ----
   // Badge rules live as a short text string in the Badges sheet's `criteria`
@@ -654,19 +660,22 @@ function getTask(taskId) { return findOne(SHEETS.TASKS, 'taskId', taskId); }
 
 /** Create (no taskId) or update (taskId given) a task. */
 function saveTask(payload) {
+  var appType = clean(payload.appType) === 'hosted' ? 'hosted' : 'link';
   var common = {
     campaignId: clean(payload.campaignId),
     title: clean(payload.title), description: clean(payload.description),
     subject: clean(payload.subject), teacherName: clean(payload.teacherName),
     dueDate: clean(payload.dueDate), category: clean(payload.category),
     masterLink: cleanUrl(payload.masterLink),
+    appType: appType,
     completionMode: clean(payload.completionMode) || 'auto',
     pointsValue: Number(payload.pointsValue) || 0,
     status: clean(payload.status) || 'Active',
     updatedAt: nowIso(),
   };
   if (!common.title) throw new Error('Task title is required.');
-  if (!common.masterLink) throw new Error('A valid http(s) master link is required.');
+  // A master link is required only for 'link' tasks; 'hosted' tasks use their own quiz.
+  if (appType === 'link' && !common.masterLink) throw new Error('A valid http(s) master link is required.');
 
   if (payload.taskId) {
     invalidateDashboard();
@@ -899,7 +908,7 @@ function handleScan(token, userAgent) {
     if (!qr) return CONFIG.FALLBACK_REDIRECT;
 
     var task = getTask(qr.taskId) || {};
-    var link = cleanUrl(task.masterLink) || CONFIG.FALLBACK_REDIRECT;
+    var link = buildTaskUrl(task, token); // hosted quiz, or master link with ?qid=token
 
     // Disabled/expired QR: still redirect (don't punish the child) but don't count.
     if (qr.status === 'Disabled' || qr.status === 'Expired') return link;
@@ -981,6 +990,88 @@ function markComplete(payload) {
 
   invalidateDashboard();
   return getQR(payload.token);
+}
+
+/* ================= TASK OUTPUT INTEGRATION ================= */
+/* Closes the loop: the actual quiz/task reports the pupil's SCORE back, so
+   points reflect real performance — not just scanning. QRAMS can also HOST a
+   teacher-pasted quiz and serve it itself (see appPage() in Code.gs). */
+
+/** The published Web App URL (…/exec). Empty string if not deployed yet. */
+function webAppUrl() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+/** Where a scan should send the pupil, passing their token so results can come back. */
+function buildTaskUrl(task, token) {
+  if (task && String(task.appType) === 'hosted') {
+    return webAppUrl() + '?app=' + encodeURIComponent(task.taskId) + '&qid=' + encodeURIComponent(token);
+  }
+  var link = cleanUrl(task && task.masterLink) || CONFIG.FALLBACK_REDIRECT;
+  var sep = link.indexOf('?') === -1 ? '?' : '&';
+  return link + sep + 'qid=' + encodeURIComponent(token); // task can read ?qid to report back
+}
+
+/**
+ * A task reports a result:  /exec?done=<token>&score=<n>&max=<m>
+ * Records completion + score and awards points proportional to the score.
+ * Never throws to the pupil.
+ */
+function submitResult(token, score, max) {
+  token = clean(token);
+  try {
+    var qr = getQR(token);
+    if (!qr) return { ok: false, message: 'Unknown code.' };
+    var task = getTask(qr.taskId) || {};
+    var now = nowIso();
+    var sc = Math.max(0, Number(score) || 0);
+    var mx = Math.max(0, Number(max) || 0);
+    var pct = mx > 0 ? sc / mx : 1;
+    var pts = Math.round((Number(task.pointsValue) || 0) * pct);
+    var wasCompleted = String(qr.progress) === 'Completed';
+
+    updateWhere(SHEETS.QR_CODES, 'token', token, {
+      progress: 'Completed', completedAt: now, lastScan: now,
+      score: sc, maxScore: mx, points: pts,
+    });
+    appendRow(SHEETS.COMPLETION_LOGS, {
+      logId: uid('COMP'), token: token, taskId: qr.taskId, entityId: qr.entityId,
+      method: 'callback', status: 'Completed', score: sc, maxScore: mx,
+      durationSec: '', evidence: '', reviewedBy: '', notes: '', timestamp: now,
+    });
+    if (isGamificationOn() && !wasCompleted) {
+      awardPoints(qr.entityId, qr.taskId, pts, 'task:' + qr.taskId + ' (score ' + sc + '/' + mx + ')');
+      checkBadges(qr.entityId);
+    }
+    invalidateDashboard();
+    return { ok: true, name: qr.label, score: sc, max: mx, points: pts };
+  } catch (err) {
+    Logger.log('submitResult error ' + token + ': ' + err);
+    return { ok: false, message: 'Could not save your result.' };
+  }
+}
+
+/* ---- Hosted quiz storage (the HTML that QRAMS serves itself) ---- */
+function getTaskApp(taskId) {
+  var row = findOne(SHEETS.TASK_APPS, 'taskId', clean(taskId));
+  return { taskId: clean(taskId), html: row ? String(row.html || '') : '' };
+}
+function saveTaskApp(taskId, html) {
+  taskId = clean(taskId);
+  if (!taskId) throw new Error('taskId is required.');
+  html = String(html || '').slice(0, 49000); // Google Sheets cell cap is 50,000 chars
+  var existing = findOne(SHEETS.TASK_APPS, 'taskId', taskId);
+  if (existing) updateWhere(SHEETS.TASK_APPS, 'taskId', taskId, { html: html, updatedAt: nowIso() });
+  else appendRow(SHEETS.TASK_APPS, { taskId: taskId, html: html, updatedAt: nowIso() });
+  updateWhere(SHEETS.TASKS, 'taskId', taskId, { appType: 'hosted' }); // route scans to the quiz
+  invalidateDashboard();
+  return { taskId: taskId, length: html.length };
+}
+function deleteTaskApp(taskId) {
+  taskId = clean(taskId);
+  deleteWhere(SHEETS.TASK_APPS, 'taskId', taskId);
+  updateWhere(SHEETS.TASKS, 'taskId', taskId, { appType: 'link' });
+  return { taskId: taskId };
 }
 
 /* ========================= 7. DASHBOARD ========================= */
@@ -1574,7 +1665,7 @@ function setupDatabase() {
   return 'Setup complete: ' + Object.keys(SCHEMA).length + ' sheets ready.';
 }
 
-/** Create a sheet with headers if it doesn't exist; top-up headers if it does. */
+/** Create a sheet with headers if it doesn't exist; add any NEW columns if it does. */
 function ensureSheet(book, name, headers) {
   var sh = book.getSheetByName(name);
   if (!sh) {
@@ -1583,6 +1674,15 @@ function ensureSheet(book, name, headers) {
     sh.setFrozenRows(1);
     sh.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#1f2a44').setFontColor('#ffffff');
     sh.autoResizeColumns(1, headers.length);
+    return sh;
+  }
+  // Sheet already exists: append any schema columns that are missing (safe upgrade).
+  var lastCol = sh.getLastColumn();
+  var have = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String) : [];
+  var missing = headers.filter(function (h) { return have.indexOf(h) === -1; });
+  if (missing.length) {
+    sh.getRange(1, have.length + 1, 1, missing.length).setValues([missing])
+      .setFontWeight('bold').setBackground('#1f2a44').setFontColor('#ffffff');
   }
   return sh;
 }
@@ -1592,6 +1692,7 @@ function applyValidation(book) {
   addDropdown(book, SHEETS.CAMPAIGNS, 'status', ENUMS.campaignStatus);
   addDropdown(book, SHEETS.TASKS, 'status', ENUMS.taskStatus);
   addDropdown(book, SHEETS.TASKS, 'completionMode', ENUMS.completionMode);
+  addDropdown(book, SHEETS.TASKS, 'appType', ENUMS.appType);
   addDropdown(book, SHEETS.QR_CODES, 'status', ENUMS.qrStatus);
   addDropdown(book, SHEETS.QR_CODES, 'progress', ENUMS.progress);
   // Phase 2 columns
@@ -1851,6 +1952,16 @@ function doGet(e) {
     return verifyPage(verifyCertificate(p.cert));
   }
 
+  // A3) RESULT CALLBACK: a task reports a pupil's score. ?done=<token>&score=&max=
+  if (p.done) {
+    return resultPage(submitResult(p.done, p.score, p.max));
+  }
+
+  // A4) HOSTED QUIZ: serve a teacher-pasted quiz with the score hook wired in.
+  if (p.app) {
+    return appPage(p.app, p.qid || '');
+  }
+
   // B) READ API
   try {
     var action = p.action || 'ping';
@@ -1888,6 +1999,7 @@ function routeGet(action, p) {
     case 'listRewards':      requireRole(p.token, CONFIG.ROLES); return listRewards();
     case 'listCertificates': requireRole(p.token, CONFIG.ROLES); return listCertificates(p.scopeId);
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
+    case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -1925,6 +2037,8 @@ function routePost(action, b) {
     case 'saveTask':        requireRole(b.token, WRITERS); return saveTask(b);
     case 'setTaskStatus':   requireRole(b.token, WRITERS); return setTaskStatus(b.taskId, b.status);
     case 'duplicateTask':   requireRole(b.token, WRITERS); return duplicateTask(b.taskId);
+    case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
+    case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);
@@ -2031,6 +2145,55 @@ function verifyPage(r) {
     '.muted{color:#94a3b8;font-size:.9rem;margin:.2em 0}</style></head>' +
     '<body><div class="card">' + inner + '</div></body></html>';
 
+  return HtmlService.createHtmlOutput(html)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/* ----------------------- Hosted quiz + result pages ----------------------- */
+/**
+ * Serve a teacher-pasted quiz (?app=<taskId>&qid=<token>). We inject a small
+ * shim that defines window.qramsDone(score, total) — the quiz calls it when the
+ * pupil finishes, and it beacons the score back to /exec?done=...
+ */
+function appPage(taskId, token) {
+  var app = getTaskApp(taskId);
+  var quiz = (app && app.html)
+    ? String(app.html)
+    : '<!doctype html><meta charset="utf-8"><p style="font-family:system-ui;padding:24px">This task has no quiz yet.</p>';
+
+  var shim =
+    '<script>(function(){' +
+    'window.QRAMS_TOKEN=' + JSON.stringify(String(token)) + ';' +
+    'window.QRAMS_EXEC=' + JSON.stringify(String(webAppUrl())) + ';' +
+    'window.qramsDone=function(score,total){' +
+      'var s=Number(score)||0,t=Number(total)||0;' +
+      'try{new Image().src=QRAMS_EXEC+"?done="+encodeURIComponent(QRAMS_TOKEN)+"&score="+s+"&max="+t;}catch(e){}' +
+      'try{var d=document.createElement("div");' +
+      'd.setAttribute("style","position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0f172a;color:#34d399;font-family:system-ui;text-align:center;padding:24px");' +
+      'd.innerHTML="<div style=\\"font-size:3rem\\">\\u2713</div><div style=\\"font-size:1.3rem;font-weight:700;margin-top:8px\\">Saved! Score "+s+" / "+t+"</div><div style=\\"color:#94a3b8;margin-top:6px\\">You can close this page now.</div>";' +
+      'document.body.appendChild(d);}catch(e){}' +
+    '};})();</script>';
+
+  // Inject the shim into the quiz's own <head>/<body> so qramsDone exists early.
+  var out;
+  if (/<head[^>]*>/i.test(quiz)) out = quiz.replace(/<head[^>]*>/i, function (m) { return m + shim; });
+  else if (/<body[^>]*>/i.test(quiz)) out = quiz.replace(/<body[^>]*>/i, function (m) { return m + shim; });
+  else out = shim + quiz;
+
+  return HtmlService.createHtmlOutput(out)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** Friendly page shown if someone opens the result-callback URL directly. */
+function resultPage(r) {
+  var ok = !!(r && r.ok);
+  var msg = ok ? ('✓ Saved! Score ' + r.score + ' / ' + r.max) : ((r && r.message) || 'Could not save.');
+  var html = '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Result</title>' +
+    '<style>body{font-family:system-ui,Arial,sans-serif;min-height:100vh;margin:0;display:flex;' +
+    'align-items:center;justify-content:center;background:#0f172a;color:' + (ok ? '#34d399' : '#f87171') +
+    ';font-size:1.3rem;text-align:center;padding:24px}</style></head><body><div>' + escapeHtml(msg) + '</div></body></html>';
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

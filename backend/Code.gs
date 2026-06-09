@@ -32,6 +32,16 @@ function doGet(e) {
     return verifyPage(verifyCertificate(p.cert));
   }
 
+  // A3) RESULT CALLBACK: a task reports a pupil's score. ?done=<token>&score=&max=
+  if (p.done) {
+    return resultPage(submitResult(p.done, p.score, p.max));
+  }
+
+  // A4) HOSTED QUIZ: serve a teacher-pasted quiz with the score hook wired in.
+  if (p.app) {
+    return appPage(p.app, p.qid || '');
+  }
+
   // B) READ API
   try {
     var action = p.action || 'ping';
@@ -69,6 +79,7 @@ function routeGet(action, p) {
     case 'listRewards':      requireRole(p.token, CONFIG.ROLES); return listRewards();
     case 'listCertificates': requireRole(p.token, CONFIG.ROLES); return listCertificates(p.scopeId);
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
+    case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -106,6 +117,8 @@ function routePost(action, b) {
     case 'saveTask':        requireRole(b.token, WRITERS); return saveTask(b);
     case 'setTaskStatus':   requireRole(b.token, WRITERS); return setTaskStatus(b.taskId, b.status);
     case 'duplicateTask':   requireRole(b.token, WRITERS); return duplicateTask(b.taskId);
+    case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
+    case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);
@@ -212,6 +225,55 @@ function verifyPage(r) {
     '.muted{color:#94a3b8;font-size:.9rem;margin:.2em 0}</style></head>' +
     '<body><div class="card">' + inner + '</div></body></html>';
 
+  return HtmlService.createHtmlOutput(html)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/* ----------------------- Hosted quiz + result pages ----------------------- */
+/**
+ * Serve a teacher-pasted quiz (?app=<taskId>&qid=<token>). We inject a small
+ * shim that defines window.qramsDone(score, total) — the quiz calls it when the
+ * pupil finishes, and it beacons the score back to /exec?done=...
+ */
+function appPage(taskId, token) {
+  var app = getTaskApp(taskId);
+  var quiz = (app && app.html)
+    ? String(app.html)
+    : '<!doctype html><meta charset="utf-8"><p style="font-family:system-ui;padding:24px">This task has no quiz yet.</p>';
+
+  var shim =
+    '<script>(function(){' +
+    'window.QRAMS_TOKEN=' + JSON.stringify(String(token)) + ';' +
+    'window.QRAMS_EXEC=' + JSON.stringify(String(webAppUrl())) + ';' +
+    'window.qramsDone=function(score,total){' +
+      'var s=Number(score)||0,t=Number(total)||0;' +
+      'try{new Image().src=QRAMS_EXEC+"?done="+encodeURIComponent(QRAMS_TOKEN)+"&score="+s+"&max="+t;}catch(e){}' +
+      'try{var d=document.createElement("div");' +
+      'd.setAttribute("style","position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0f172a;color:#34d399;font-family:system-ui;text-align:center;padding:24px");' +
+      'd.innerHTML="<div style=\\"font-size:3rem\\">\\u2713</div><div style=\\"font-size:1.3rem;font-weight:700;margin-top:8px\\">Saved! Score "+s+" / "+t+"</div><div style=\\"color:#94a3b8;margin-top:6px\\">You can close this page now.</div>";' +
+      'document.body.appendChild(d);}catch(e){}' +
+    '};})();</script>';
+
+  // Inject the shim into the quiz's own <head>/<body> so qramsDone exists early.
+  var out;
+  if (/<head[^>]*>/i.test(quiz)) out = quiz.replace(/<head[^>]*>/i, function (m) { return m + shim; });
+  else if (/<body[^>]*>/i.test(quiz)) out = quiz.replace(/<body[^>]*>/i, function (m) { return m + shim; });
+  else out = shim + quiz;
+
+  return HtmlService.createHtmlOutput(out)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** Friendly page shown if someone opens the result-callback URL directly. */
+function resultPage(r) {
+  var ok = !!(r && r.ok);
+  var msg = ok ? ('✓ Saved! Score ' + r.score + ' / ' + r.max) : ((r && r.message) || 'Could not save.');
+  var html = '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Result</title>' +
+    '<style>body{font-family:system-ui,Arial,sans-serif;min-height:100vh;margin:0;display:flex;' +
+    'align-items:center;justify-content:center;background:#0f172a;color:' + (ok ? '#34d399' : '#f87171') +
+    ';font-size:1.3rem;text-align:center;padding:24px}</style></head><body><div>' + escapeHtml(msg) + '</div></body></html>';
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

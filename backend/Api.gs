@@ -68,19 +68,22 @@ function getTask(taskId) { return findOne(SHEETS.TASKS, 'taskId', taskId); }
 
 /** Create (no taskId) or update (taskId given) a task. */
 function saveTask(payload) {
+  var appType = clean(payload.appType) === 'hosted' ? 'hosted' : 'link';
   var common = {
     campaignId: clean(payload.campaignId),
     title: clean(payload.title), description: clean(payload.description),
     subject: clean(payload.subject), teacherName: clean(payload.teacherName),
     dueDate: clean(payload.dueDate), category: clean(payload.category),
     masterLink: cleanUrl(payload.masterLink),
+    appType: appType,
     completionMode: clean(payload.completionMode) || 'auto',
     pointsValue: Number(payload.pointsValue) || 0,
     status: clean(payload.status) || 'Active',
     updatedAt: nowIso(),
   };
   if (!common.title) throw new Error('Task title is required.');
-  if (!common.masterLink) throw new Error('A valid http(s) master link is required.');
+  // A master link is required only for 'link' tasks; 'hosted' tasks use their own quiz.
+  if (appType === 'link' && !common.masterLink) throw new Error('A valid http(s) master link is required.');
 
   if (payload.taskId) {
     invalidateDashboard();
@@ -313,7 +316,7 @@ function handleScan(token, userAgent) {
     if (!qr) return CONFIG.FALLBACK_REDIRECT;
 
     var task = getTask(qr.taskId) || {};
-    var link = cleanUrl(task.masterLink) || CONFIG.FALLBACK_REDIRECT;
+    var link = buildTaskUrl(task, token); // hosted quiz, or master link with ?qid=token
 
     // Disabled/expired QR: still redirect (don't punish the child) but don't count.
     if (qr.status === 'Disabled' || qr.status === 'Expired') return link;
@@ -395,6 +398,88 @@ function markComplete(payload) {
 
   invalidateDashboard();
   return getQR(payload.token);
+}
+
+/* ================= TASK OUTPUT INTEGRATION ================= */
+/* Closes the loop: the actual quiz/task reports the pupil's SCORE back, so
+   points reflect real performance — not just scanning. QRAMS can also HOST a
+   teacher-pasted quiz and serve it itself (see appPage() in Code.gs). */
+
+/** The published Web App URL (…/exec). Empty string if not deployed yet. */
+function webAppUrl() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+/** Where a scan should send the pupil, passing their token so results can come back. */
+function buildTaskUrl(task, token) {
+  if (task && String(task.appType) === 'hosted') {
+    return webAppUrl() + '?app=' + encodeURIComponent(task.taskId) + '&qid=' + encodeURIComponent(token);
+  }
+  var link = cleanUrl(task && task.masterLink) || CONFIG.FALLBACK_REDIRECT;
+  var sep = link.indexOf('?') === -1 ? '?' : '&';
+  return link + sep + 'qid=' + encodeURIComponent(token); // task can read ?qid to report back
+}
+
+/**
+ * A task reports a result:  /exec?done=<token>&score=<n>&max=<m>
+ * Records completion + score and awards points proportional to the score.
+ * Never throws to the pupil.
+ */
+function submitResult(token, score, max) {
+  token = clean(token);
+  try {
+    var qr = getQR(token);
+    if (!qr) return { ok: false, message: 'Unknown code.' };
+    var task = getTask(qr.taskId) || {};
+    var now = nowIso();
+    var sc = Math.max(0, Number(score) || 0);
+    var mx = Math.max(0, Number(max) || 0);
+    var pct = mx > 0 ? sc / mx : 1;
+    var pts = Math.round((Number(task.pointsValue) || 0) * pct);
+    var wasCompleted = String(qr.progress) === 'Completed';
+
+    updateWhere(SHEETS.QR_CODES, 'token', token, {
+      progress: 'Completed', completedAt: now, lastScan: now,
+      score: sc, maxScore: mx, points: pts,
+    });
+    appendRow(SHEETS.COMPLETION_LOGS, {
+      logId: uid('COMP'), token: token, taskId: qr.taskId, entityId: qr.entityId,
+      method: 'callback', status: 'Completed', score: sc, maxScore: mx,
+      durationSec: '', evidence: '', reviewedBy: '', notes: '', timestamp: now,
+    });
+    if (isGamificationOn() && !wasCompleted) {
+      awardPoints(qr.entityId, qr.taskId, pts, 'task:' + qr.taskId + ' (score ' + sc + '/' + mx + ')');
+      checkBadges(qr.entityId);
+    }
+    invalidateDashboard();
+    return { ok: true, name: qr.label, score: sc, max: mx, points: pts };
+  } catch (err) {
+    Logger.log('submitResult error ' + token + ': ' + err);
+    return { ok: false, message: 'Could not save your result.' };
+  }
+}
+
+/* ---- Hosted quiz storage (the HTML that QRAMS serves itself) ---- */
+function getTaskApp(taskId) {
+  var row = findOne(SHEETS.TASK_APPS, 'taskId', clean(taskId));
+  return { taskId: clean(taskId), html: row ? String(row.html || '') : '' };
+}
+function saveTaskApp(taskId, html) {
+  taskId = clean(taskId);
+  if (!taskId) throw new Error('taskId is required.');
+  html = String(html || '').slice(0, 49000); // Google Sheets cell cap is 50,000 chars
+  var existing = findOne(SHEETS.TASK_APPS, 'taskId', taskId);
+  if (existing) updateWhere(SHEETS.TASK_APPS, 'taskId', taskId, { html: html, updatedAt: nowIso() });
+  else appendRow(SHEETS.TASK_APPS, { taskId: taskId, html: html, updatedAt: nowIso() });
+  updateWhere(SHEETS.TASKS, 'taskId', taskId, { appType: 'hosted' }); // route scans to the quiz
+  invalidateDashboard();
+  return { taskId: taskId, length: html.length };
+}
+function deleteTaskApp(taskId) {
+  taskId = clean(taskId);
+  deleteWhere(SHEETS.TASK_APPS, 'taskId', taskId);
+  updateWhere(SHEETS.TASKS, 'taskId', taskId, { appType: 'link' });
+  return { taskId: taskId };
 }
 
 /* ========================= 7. DASHBOARD ========================= */

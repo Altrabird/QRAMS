@@ -49,6 +49,7 @@ const SHEETS = {
   // ---- Phase 2 (now live) ----
   STUDENT_BADGES: 'Student_Badges', // which pupil earned which badge (1 row each)
   CERTIFICATES: 'Certificates',     // issued, QR-verifiable certificates
+  TASK_APPS: 'Task_Apps',           // teacher-pasted quiz/app HTML that QRAMS hosts itself
 };
 
 /**
@@ -65,7 +66,7 @@ const SCHEMA = {
 
   Tasks: [
     'taskId', 'campaignId', 'title', 'description', 'subject', 'teacherName',
-    'dueDate', 'category', 'masterLink', 'completionMode', 'pointsValue',
+    'dueDate', 'category', 'masterLink', 'appType', 'completionMode', 'pointsValue',
     'status', 'createdAt', 'updatedAt',
   ],
 
@@ -76,7 +77,7 @@ const SCHEMA = {
   QR_Codes: [
     'token', 'taskId', 'entityType', 'entityId', 'label', 'className',
     'status', 'progress', 'firstScan', 'lastScan', 'scanCount',
-    'completedAt', 'points', 'remarks', 'createdAt',
+    'completedAt', 'points', 'score', 'maxScore', 'remarks', 'createdAt',
   ],
 
   Scan_Logs: [
@@ -86,7 +87,7 @@ const SCHEMA = {
 
   Completion_Logs: [
     'logId', 'token', 'taskId', 'entityId', 'method',
-    'status', 'durationSec', 'evidence', 'reviewedBy', 'notes', 'timestamp',
+    'status', 'score', 'maxScore', 'durationSec', 'evidence', 'reviewedBy', 'notes', 'timestamp',
   ],
 
   Settings: ['key', 'value', 'updatedAt'],
@@ -106,6 +107,10 @@ const SCHEMA = {
     'certId', 'token', 'entityId', 'entityName', 'scope', 'scopeId',
     'title', 'issuedBy', 'issuedAt', 'status',
   ],
+
+  // ---- Task output integration ----
+  // Quiz/app HTML pasted by a teacher that QRAMS hosts and serves itself.
+  Task_Apps: ['taskId', 'html', 'updatedAt'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -116,6 +121,7 @@ const ENUMS = {
   progress: ['Not Started', 'Opened', 'Started', 'In Progress', 'Submitted', 'Reviewed', 'Completed'],
   completionMode: ['auto', 'manual', 'form', 'quiz', 'evidence', 'time'],
   entityType: ['student', 'group', 'class', 'teacher', 'event', 'custom'],
+  appType: ['link', 'hosted'], // 'link' = external master link; 'hosted' = QRAMS serves the quiz
 
   // ---- Phase 2 ----
   // Badge rules live as a short text string in the Badges sheet's `criteria`

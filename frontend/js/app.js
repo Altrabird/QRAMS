@@ -271,10 +271,19 @@ function taskRow(t) {
     </td></tr>`;
 }
 
-function taskModal(taskId) {
-  const t = taskId ? _tasksCache.find(x => x.taskId === taskId) : {};
+async function taskModal(taskId) {
+  const t = taskId ? (_tasksCache.find(x => x.taskId === taskId) || {}) : {};
   const campOpts = `<option value="">— none —</option>` +
     _campaignsCache.map(c => `<option value="${UI.esc(c.campaignId)}"${c.campaignId === t.campaignId ? ' selected' : ''}>${UI.esc(c.name)}</option>`).join('');
+  const appType = t.appType === 'hosted' ? 'hosted' : 'link';
+
+  // The ready-made prompt teachers paste into any AI to generate a compatible quiz.
+  const aiPrompt = 'Create ONE self-contained HTML file (HTML + CSS + JavaScript, no external libraries or CDNs) for a short quiz on [TOPIC] for [YEAR/LEVEL] pupils. Show one question at a time, then a final score screen. CRITICAL: when the quiz finishes, call the global function qramsDone(score, total) exactly once — for example qramsDone(8, 10). Do not add any login, submit button to a server, or anything else. Output only the HTML file.';
+
+  // Load existing hosted-quiz HTML when editing a hosted task.
+  let quizHtml = '';
+  if (taskId && appType === 'hosted') { try { quizHtml = (await Api.getTaskApp(taskId)).html || ''; } catch (e) {} }
+
   UI.modal(`
     <div class="modal-header"><h5 class="modal-title">${taskId ? 'Edit' : 'New'} Task</h5>
       <button class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -283,8 +292,28 @@ function taskModal(taskId) {
         <input class="form-control" name="title" value="${UI.esc(t.title)}" required></div>
       <div class="col-md-4"><label class="form-label small fw-semibold">Subject</label>
         <input class="form-control" name="subject" value="${UI.esc(t.subject)}"></div>
-      <div class="col-12"><label class="form-label small fw-semibold">Master Link (URL) *</label>
-        <input class="form-control" name="masterLink" type="url" placeholder="https://…" value="${UI.esc(t.masterLink)}" required></div>
+
+      <div class="col-12"><label class="form-label small fw-semibold">Task type</label>
+        <select class="form-select" name="appType" id="taskAppType">
+          <option value="link"${appType === 'link' ? ' selected' : ''}>External link (Google Form, website, …)</option>
+          <option value="hosted"${appType === 'hosted' ? ' selected' : ''}>Hosted quiz — QRAMS hosts it &amp; collects the score</option>
+        </select></div>
+
+      <div class="col-12" id="linkArea">
+        <label class="form-label small fw-semibold">Master link (URL)</label>
+        <input class="form-control" name="masterLink" type="url" placeholder="https://…" value="${UI.esc(t.masterLink)}">
+        <div class="form-text">QRAMS adds <code>?qid=&lt;token&gt;</code> to this link so the task can report a score back (optional).</div>
+      </div>
+
+      <div class="col-12 d-none" id="quizArea">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <label class="form-label small fw-semibold mb-0">Quiz HTML</label>
+          <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="copyPromptBtn"><i class="bi bi-clipboard me-1"></i>Copy AI prompt</button>
+        </div>
+        <textarea class="form-control font-monospace" id="quizHtml" rows="8" placeholder="&lt;!doctype html&gt; … your quiz that calls qramsDone(score, total) when done …">${UI.esc(quizHtml)}</textarea>
+        <div class="form-text">Generate a quiz with any AI (use the prompt button), paste it here, and it must call <code>qramsDone(score, total)</code> when finished. Max ~49,000 characters.</div>
+      </div>
+
       <div class="col-12"><label class="form-label small fw-semibold">Description</label>
         <textarea class="form-control" name="description" rows="2">${UI.esc(t.description)}</textarea></div>
       <div class="col-md-6"><label class="form-label small fw-semibold">Campaign</label>
@@ -302,13 +331,38 @@ function taskModal(taskId) {
     </form></div>
     <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
       <button class="btn btn-primary" id="saveTaskBtn">Save Task</button></div>`);
+
+  // Toggle link vs hosted-quiz fields
+  const typeSel = UI.el('taskAppType');
+  const syncType = () => {
+    const hosted = typeSel.value === 'hosted';
+    UI.el('quizArea').classList.toggle('d-none', !hosted);
+    UI.el('linkArea').classList.toggle('d-none', hosted);
+  };
+  typeSel.onchange = syncType; syncType();
+
+  UI.el('copyPromptBtn').onclick = () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(aiPrompt)
+      .then(() => UI.toast('Prompt copied — paste it into Gemini / ChatGPT / Claude.'))
+      .catch(() => UI.toast('Copy failed — select the text manually.', 'warning'));
+    else UI.toast('Clipboard not available here.', 'warning');
+  };
+
   UI.el('saveTaskBtn').onclick = async () => {
     const f = UI.el('taskForm');
     if (!f.reportValidity()) return;
     const payload = Object.fromEntries(new FormData(f).entries());
+    const html = (UI.el('quizHtml')?.value || '');
     if (taskId) payload.taskId = taskId;
-    try { await Api.saveTask(payload); UI.closeModal(); UI.toast('Task saved.'); renderTasks(); }
-    catch (err) { UI.toast(err.message, 'danger'); }
+    if (payload.appType === 'hosted' && !html.trim()) return UI.toast('Paste the quiz HTML (or switch to External link).', 'warning');
+    if (payload.appType === 'link' && !(payload.masterLink || '').trim()) return UI.toast('Enter a master link (or switch to Hosted quiz).', 'warning');
+    const btn = UI.el('saveTaskBtn'); btn.disabled = true;
+    try {
+      const saved = await Api.saveTask(payload);
+      const id = (saved && saved.taskId) || taskId;
+      if (payload.appType === 'hosted') await Api.saveTaskApp(id, html);
+      UI.closeModal(); UI.toast('Task saved.'); renderTasks();
+    } catch (err) { UI.toast(err.message, 'danger'); btn.disabled = false; }
   };
 }
 async function duplicateTask(id) {
@@ -651,6 +705,7 @@ async function renderQRDetail(token) {
           <div class="section-head"><h2>Tracking</h2></div>
           <div class="row g-3 mb-3">
             ${miniStat('Scans', qr.scanCount || 0)}${miniStat('Points', qr.points || 0)}
+            ${miniStat('Score', qr.maxScore ? ((qr.score || 0) + ' / ' + qr.maxScore) : '—')}
             ${miniStat('First scan', UI.dateTime(qr.firstScan))}${miniStat('Last scan', UI.dateTime(qr.lastScan))}
           </div>
           <div class="mb-3"><span class="small text-secondary">Task:</span> <b>${UI.esc(task ? task.title : qr.taskId)}</b></div>
