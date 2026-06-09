@@ -338,6 +338,9 @@ async function taskModal(taskId) {
     const hosted = typeSel.value === 'hosted';
     UI.el('quizArea').classList.toggle('d-none', !hosted);
     UI.el('linkArea').classList.toggle('d-none', hosted);
+    // Hosted quizzes should complete when the SCORE arrives, not on scan — avoid 'auto'.
+    const cm = UI.el('taskForm').elements['completionMode'];
+    if (hosted && cm && cm.value === 'auto') cm.value = 'quiz';
   };
   typeSel.onchange = syncType; syncType();
 

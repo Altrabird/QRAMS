@@ -621,6 +621,7 @@ function deleteTask(taskId) {
   deleteAllWhere(SHEETS.COMPLETION_LOGS, 'taskId', taskId);
   deleteAllWhere(SHEETS.POINTS_LOG, 'taskId', taskId);
   deleteAllWhere(SHEETS.QR_CODES, 'taskId', taskId);
+  deleteWhere(SHEETS.TASK_APPS, 'taskId', taskId); // remove any hosted quiz too
   deleteWhere(SHEETS.TASKS, 'taskId', taskId);
   invalidateDashboard();
   return { deleted: taskId, qrCodes: qrCount };
