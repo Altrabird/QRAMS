@@ -126,6 +126,9 @@ async function loadSchoolName() {
     const s = await Api.getSettings();
     if (s.schoolName) UI.el('schoolBadge').textContent = s.schoolName;
     QRAMS.setGamify(s.gamificationEnabled === 'true');
+    // One-time: tell the backend its own public URL so hosted-quiz score callbacks work.
+    const u = QRAMS.getApiUrl();
+    if (u && s.execUrl !== u && ((QRAMS.getUser() || {}).role === 'admin')) Api.saveSetting('execUrl', u).catch(() => {});
   } catch (e) {}
   applyGamificationNav();
 }

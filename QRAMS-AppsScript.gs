@@ -999,6 +999,9 @@ function markComplete(payload) {
 
 /** The published Web App URL (…/exec). Empty string if not deployed yet. */
 function webAppUrl() {
+  // Prefer the exact /exec URL the frontend stored (matches the QR codes), so the
+  // score callback always points at the right place; fall back to the runtime URL.
+  try { var s = getSettings(); if (s && s.execUrl) return String(s.execUrl); } catch (e) {}
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
 
@@ -1945,6 +1948,12 @@ function doGet(e) {
   if (p.id) {
     var ua = (e.parameter['ua']) || ''; // phones can't send UA here; best-effort
     var dest = handleScan(p.id, ua);
+    // Hosted quiz: handleScan returns our OWN ?app= URL. Serve the quiz INLINE here
+    // (one page load) instead of redirecting GAS→GAS, which phones block / error on.
+    if (dest && dest.indexOf('?app=') !== -1 && dest.indexOf('qid=') !== -1) {
+      var mA = dest.match(/[?&]app=([^&]+)/), mQ = dest.match(/[?&]qid=([^&]+)/);
+      return appPage(decodeURIComponent(mA ? mA[1] : ''), decodeURIComponent(mQ ? mQ[1] : ''));
+    }
     return redirectPage(dest);
   }
 

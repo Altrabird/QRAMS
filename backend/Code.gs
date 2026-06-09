@@ -24,6 +24,12 @@ function doGet(e) {
   if (p.id) {
     var ua = (e.parameter['ua']) || ''; // phones can't send UA here; best-effort
     var dest = handleScan(p.id, ua);
+    // Hosted quiz: handleScan returns our OWN ?app= URL. Serve the quiz INLINE here
+    // (one page load) instead of redirecting GAS→GAS, which phones block / error on.
+    if (dest && dest.indexOf('?app=') !== -1 && dest.indexOf('qid=') !== -1) {
+      var mA = dest.match(/[?&]app=([^&]+)/), mQ = dest.match(/[?&]qid=([^&]+)/);
+      return appPage(decodeURIComponent(mA ? mA[1] : ''), decodeURIComponent(mQ ? mQ[1] : ''));
+    }
     return redirectPage(dest);
   }
 

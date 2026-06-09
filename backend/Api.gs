@@ -407,6 +407,9 @@ function markComplete(payload) {
 
 /** The published Web App URL (…/exec). Empty string if not deployed yet. */
 function webAppUrl() {
+  // Prefer the exact /exec URL the frontend stored (matches the QR codes), so the
+  // score callback always points at the right place; fall back to the runtime URL.
+  try { var s = getSettings(); if (s && s.execUrl) return String(s.execUrl); } catch (e) {}
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
 
