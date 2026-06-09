@@ -31,8 +31,11 @@ const QRAMS = {
     certScope: ['task', 'campaign'],
   },
 
-  getApiUrl() { return localStorage.getItem(this.KEYS.API) || this.DEFAULT_API_URL || ''; },
-  setApiUrl(u) { localStorage.setItem(this.KEYS.API, (u || '').trim()); },
+  // Strip Google's account-selector segment (…/macros/u/6/s/… → …/macros/s/…) so the
+  // QR links work for PUPILS, who are not signed into the teacher's Google account.
+  _cleanExec(u) { return String(u || '').trim().replace(/\/macros\/u\/\d+\/s\//, '/macros/s/'); },
+  getApiUrl() { return this._cleanExec(localStorage.getItem(this.KEYS.API) || this.DEFAULT_API_URL); },
+  setApiUrl(u) { localStorage.setItem(this.KEYS.API, this._cleanExec(u)); },
 
   getToken() { return localStorage.getItem(this.KEYS.TOKEN) || ''; },
   getUser() { try { return JSON.parse(localStorage.getItem(this.KEYS.USER)); } catch (e) { return null; } },
