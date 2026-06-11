@@ -314,11 +314,14 @@ async function taskModal(taskId) {
         <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
           <label class="form-label small fw-semibold mb-0">Questions</label>
           <span class="badge text-bg-light" id="qbCount">0</span>
-          <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
+          <button type="button" class="btn btn-sm btn-success ms-auto" id="qbUploadBtn"><i class="bi bi-camera me-1"></i>Upload exam paper</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
           <button type="button" class="btn btn-sm btn-primary" id="qbAddBtn"><i class="bi bi-plus-lg me-1"></i>Add question</button>
+          <input type="file" id="qbFile" accept="image/*,application/pdf" class="d-none">
         </div>
         <div class="d-none border rounded p-2 mb-2" id="qbAiArea">
-          <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.</p>
+          <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.
+            <br><i class="bi bi-lightbulb me-1"></i><b>Tip:</b> you can also attach a photo/PDF of an exam paper in the AI chat — it will extract the questions from it.</p>
           <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="qbCopyPrompt"><i class="bi bi-clipboard me-1"></i>Copy question prompt</button>
           <textarea class="form-control form-control-sm font-monospace mb-2" id="qbAiText" rows="5" placeholder='[{"q":"…","options":["…","…","…","…"],"correct":1}]'></textarea>
           <button type="button" class="btn btn-sm btn-success" id="qbParseBtn"><i class="bi bi-magic me-1"></i>Parse &amp; add</button>
@@ -379,6 +382,8 @@ async function taskModal(taskId) {
   UI.el('qbAddBtn').onclick = () => { _quizDraft.push(emptyQuestion()); qbRender(); };
   UI.el('qbAiBtn').onclick = () => UI.el('qbAiArea').classList.toggle('d-none');
   UI.el('qbParseBtn').onclick = qbParseAI;
+  UI.el('qbUploadBtn').onclick = () => UI.el('qbFile').click();
+  UI.el('qbFile').onchange = (e) => { const f = e.target.files[0]; if (f) qbUploadPaper(f); e.target.value = ''; };
 
   UI.el('saveTaskBtn').onclick = async () => {
     const f = UI.el('taskForm');
@@ -410,7 +415,7 @@ async function taskModal(taskId) {
    inline handlers (the modal is re-rendered HTML, not a framework component). */
 let _quizDraft = [];
 const QB_LETTERS = ['A', 'B', 'C', 'D'];
-const QB_AI_PROMPT = 'Write 5 multiple-choice questions for a quiz on [TOPIC] for [YEAR/LEVEL] pupils in [LANGUAGE]. Keep each question short and clear. Output ONLY a JSON array in exactly this format, with no other text: [{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] — "correct" is the position of the right option, counting from 1.';
+const QB_AI_PROMPT = 'If a file (exam paper) is attached, extract its multiple-choice questions and work out the correct answers; otherwise write 5 multiple-choice questions on [TOPIC] for [YEAR/LEVEL] pupils in [LANGUAGE]. Keep each question short and clear. Output ONLY a JSON array in exactly this format, with no other text: [{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] — "correct" is the position of the right option, counting from 1.';
 
 function emptyQuestion() { return { q: '', options: ['', '', '', ''], correct: 'A' }; }
 
@@ -510,6 +515,71 @@ function qbParseAI() {
   UI.el('qbAiArea').classList.add('d-none');
   qbRender();
   UI.toast(`Added ${parsed.length} question(s) — please double-check the correct answers!`);
+}
+
+/* ------------- Upload an exam paper → AI extracts the questions ------------- */
+
+/** Shrink a photo before upload (faster on school wifi, better OCR). Returns base64 JPEG. */
+function shrinkImage(file, maxDim = 1600) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    };
+    img.onerror = () => reject(new Error('Could not read that image.'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/** Read a file as raw base64 (used for PDFs). */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(new Error('Could not read that file.'));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Send the exam paper to the backend AI and drop the questions into the builder. */
+async function qbUploadPaper(file) {
+  const btn = UI.el('qbUploadBtn');
+  try {
+    let base64, mime;
+    if (file.type === 'application/pdf') {
+      if (file.size > 8 * 1024 * 1024) return UI.toast('PDF too big (max 8 MB) — photo the pages instead.', 'warning');
+      base64 = await fileToBase64(file);
+      mime = 'application/pdf';
+    } else if (file.type.startsWith('image/')) {
+      base64 = await shrinkImage(file);
+      mime = 'image/jpeg';
+    } else {
+      return UI.toast('Please choose a photo (JPG/PNG) or a PDF.', 'warning');
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Reading paper…';
+    const r = await Api.extractQuiz(base64, mime);
+
+    const parsed = r.questions.map(q => ({
+      q: q.question, options: [...q.options, '', '', ''].slice(0, 4), correct: q.correct || 'A',
+    }));
+    const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
+    _quizDraft = blank ? parsed : _quizDraft.concat(parsed);
+    qbRender();
+    UI.toast(`Found ${parsed.length} question(s) — please CHECK the ticked answers before saving!`, 'warning');
+  } catch (err) {
+    UI.toast(err.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-camera me-1"></i>Upload exam paper';
+  }
 }
 async function duplicateTask(id) {
   try { await Api.duplicateTask(id); UI.toast('Task duplicated.'); renderTasks(); }
@@ -928,6 +998,13 @@ async function renderSettings() {
           <option value="dark">Dark</option>
           <option value="light">Light</option>
         </select>
+        ${(u.role === 'admin') ? `
+        <label class="form-label small fw-semibold mt-3">Gemini AI key <span class="text-secondary">(for “Upload exam paper”)</span></label>
+        <div class="input-group">
+          <input type="password" class="form-control" id="setGemKey" placeholder="paste your free key…">
+          <button class="btn btn-outline-primary" id="setGemKeySave">Save</button>
+        </div>
+        <div class="form-text" id="gemKeyStatus">Checking…</div>` : ''}
       </div></div>
       <div class="col-lg-6"><div class="card p-3">
         <div class="section-head"><h2><i class="bi bi-person me-1"></i>Account</h2></div>
@@ -962,6 +1039,27 @@ async function renderSettings() {
   };
   const themeSel = UI.el('setThemeSelect');
   if (themeSel) { themeSel.value = localStorage.getItem(QRAMS.KEYS.THEME) || 'matrix'; themeSel.onchange = (e) => applyTheme(e.target.value); }
+
+  // Gemini key (admin only): status + save. The key itself never comes back to the browser.
+  if (UI.el('setGemKeySave')) {
+    const showKeyStatus = async () => {
+      try {
+        const r = await Api.hasGeminiKey();
+        UI.el('gemKeyStatus').innerHTML = r.set
+          ? '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Key saved — “Upload exam paper” is ready.</span>'
+          : 'Not set — get a free key at <b>aistudio.google.com</b> (sign in → Get API key), then paste it here.';
+      } catch (e) { UI.el('gemKeyStatus').textContent = ''; }
+    };
+    showKeyStatus();
+    UI.el('setGemKeySave').onclick = async () => {
+      try {
+        await Api.saveGeminiKey(UI.el('setGemKey').value.trim());
+        UI.el('setGemKey').value = '';
+        UI.toast('AI key saved.');
+        showKeyStatus();
+      } catch (e) { UI.toast(e.message, 'danger'); }
+    };
+  }
 }
 
 /* =======================================================================

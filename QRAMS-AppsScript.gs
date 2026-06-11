@@ -1203,6 +1203,100 @@ function deleteTaskApp(taskId) {
   return { taskId: taskId };
 }
 
+/* ================= EXAM PAPER → QUIZ (AI extraction) ================= */
+/* A teacher uploads a photo/PDF of an exam paper; we send it to the Gemini API
+   (the school's own free key, stored server-side in Script Properties — never
+   exposed to the browser) and get back structured questions for the builder.
+   The teacher ALWAYS reviews the ticked answers before saving. */
+
+var GEMINI_MODEL = 'gemini-2.5-flash'; // free-tier multimodal model; change here if Google renames it
+
+/** Admin-only: store (or clear, with '') the Gemini API key. Never returned to clients. */
+function saveGeminiKey(key) {
+  key = String(key || '').trim();
+  var props = PropertiesService.getScriptProperties();
+  if (!key) { props.deleteProperty('GEMINI_API_KEY'); return { set: false }; }
+  props.setProperty('GEMINI_API_KEY', key);
+  return { set: true };
+}
+
+/** Is a key configured? (Only a yes/no — the key itself stays server-side.) */
+function hasGeminiKey() {
+  return { set: !!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') };
+}
+
+/**
+ * Read an exam paper (base64 photo/PDF) and return builder-ready questions.
+ * Throws clear, teacher-friendly errors.
+ */
+function extractQuiz(fileBase64, mimeType) {
+  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key) throw new Error('No AI key set yet. An admin can add a free Gemini key in Settings (aistudio.google.com).');
+  if (!fileBase64) throw new Error('No file received.');
+  mimeType = String(mimeType || 'image/jpeg');
+  if (['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].indexOf(mimeType) === -1) {
+    throw new Error('Please upload a photo (JPG/PNG) or a PDF.');
+  }
+
+  var prompt =
+    'You are reading a school exam paper (it may be in Malay or English). ' +
+    'Extract EVERY multiple-choice question exactly as written, keeping the original language. ' +
+    'For each question, also determine the correct answer yourself. ' +
+    'Skip essay, fill-in-the-blank and matching questions. Maximum 50 questions. ' +
+    'Output ONLY a JSON array, no other text, in exactly this format: ' +
+    '[{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] ' +
+    'where "correct" is the position of the right option counting from 1. ' +
+    'If the paper has no multiple-choice questions, output [].';
+
+  var res = UrlFetchApp.fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL +
+    ':generateContent?key=' + encodeURIComponent(key),
+    {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        contents: [{ parts: [
+          { inline_data: { mime_type: mimeType, data: String(fileBase64) } },
+          { text: prompt },
+        ] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      }),
+    }
+  );
+
+  var code = res.getResponseCode();
+  var txt = res.getContentText();
+  if (code !== 200) {
+    var msg = 'AI request failed (HTTP ' + code + ').';
+    try { var ej = JSON.parse(txt); if (ej.error && ej.error.message) msg = 'AI error: ' + String(ej.error.message).slice(0, 200); } catch (e) {}
+    throw new Error(msg);
+  }
+
+  var out = '';
+  try { var j = JSON.parse(txt); out = j.candidates[0].content.parts[0].text; }
+  catch (e) { throw new Error('Unexpected AI response — please try again.'); }
+
+  var m = String(out).match(/\[[\s\S]*\]/);
+  if (!m) throw new Error('The AI could not find quiz questions in that file.');
+  var arr;
+  try { arr = JSON.parse(m[0]); } catch (e) { throw new Error('The AI reply was not valid JSON — please try again.'); }
+
+  var letters = ['A', 'B', 'C', 'D'];
+  var qs = [];
+  (arr || []).forEach(function (x) {
+    var qText = String(x.q || x.question || '').trim();
+    var opts = (x.options || []).map(function (o) { return String(o).trim(); }).filter(String).slice(0, 4);
+    if (!qText || opts.length < 2) return;
+    var c = x.correct, letter = 'A';
+    if (typeof c === 'string' && /^[A-Da-d]$/.test(c.trim())) letter = c.trim().toUpperCase();
+    else { var n = Number(c); letter = letters[(n >= 1 && n <= opts.length) ? n - 1 : 0] || 'A'; }
+    qs.push({ question: qText, options: opts, correct: letter });
+  });
+  if (!qs.length) throw new Error('No multiple-choice questions were found in that file.');
+  return { questions: qs.slice(0, 50), model: GEMINI_MODEL };
+}
+
 /* ========================= 7. DASHBOARD ========================= */
 
 /** Cache key for the computed dashboard. */
@@ -2145,6 +2239,7 @@ function routeGet(action, p) {
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
     case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
     case 'getQuiz':          requireRole(p.token, CONFIG.ROLES); return getQuiz(p.taskId);
+    case 'hasGeminiKey':     requireRole(p.token, CONFIG.ROLES); return hasGeminiKey();
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -2185,6 +2280,8 @@ function routePost(action, b) {
     case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
+    case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime);
+    case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);

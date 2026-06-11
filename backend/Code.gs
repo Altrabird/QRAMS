@@ -93,6 +93,7 @@ function routeGet(action, p) {
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
     case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
     case 'getQuiz':          requireRole(p.token, CONFIG.ROLES); return getQuiz(p.taskId);
+    case 'hasGeminiKey':     requireRole(p.token, CONFIG.ROLES); return hasGeminiKey();
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -133,6 +134,8 @@ function routePost(action, b) {
     case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
+    case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime);
+    case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);
