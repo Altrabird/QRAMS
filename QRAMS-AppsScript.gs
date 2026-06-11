@@ -1099,14 +1099,16 @@ function saveQuiz(taskId, questions) {
 
   var letters = ['A', 'B', 'C', 'D'];
   var rows = questions.map(function (q, i) {
+    // Accept both shapes: {q: …} (builder/AI import) and {question: …}.
+    var text = clean(q.q !== undefined && q.q !== null && String(q.q) !== '' ? q.q : q.question);
     var opts = (q.options || []).map(function (o) { return clean(o); });
     var correct = String(q.correct || 'A').toUpperCase();
-    if (!clean(q.question)) throw new Error('Question ' + (i + 1) + ' has no text.');
+    if (!text) throw new Error('Question ' + (i + 1) + ' has no text.');
     if (!opts[0] || !opts[1]) throw new Error('Question ' + (i + 1) + ' needs at least options A and B.');
     if (letters.indexOf(correct) === -1) throw new Error('Question ' + (i + 1) + ': correct must be A–D.');
     if (!opts[letters.indexOf(correct)]) throw new Error('Question ' + (i + 1) + ': the correct option is empty.');
     return {
-      taskId: taskId, qNo: i + 1, question: clean(q.question),
+      taskId: taskId, qNo: i + 1, question: text,
       optionA: opts[0] || '', optionB: opts[1] || '', optionC: opts[2] || '', optionD: opts[3] || '',
       correct: correct,
     };
