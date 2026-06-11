@@ -1228,20 +1228,34 @@ function hasGeminiKey() {
 }
 
 /**
- * Read an exam paper (base64 photo/PDF) and return builder-ready questions.
+ * Read an exam paper and return builder-ready questions.
+ * Accepts ONE base64 file (photo/PDF) — or, for multi-page papers, an array
+ * `files` of {data, mime} (up to 6 photos read together as a single paper).
  * Throws clear, teacher-friendly errors.
  */
-function extractQuiz(fileBase64, mimeType) {
+function extractQuiz(fileBase64, mimeType, files) {
   var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!key) throw new Error('No AI key set yet. An admin can add a free Gemini key in Settings (aistudio.google.com).');
-  if (!fileBase64) throw new Error('No file received.');
-  mimeType = String(mimeType || 'image/jpeg');
-  if (['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].indexOf(mimeType) === -1) {
-    throw new Error('Please upload a photo (JPG/PNG) or a PDF.');
+
+  // Normalise input to a list of pages.
+  var list = [];
+  if (files && files.length) {
+    for (var i = 0; i < Math.min(files.length, 6); i++) {
+      if (files[i] && files[i].data) list.push({ data: String(files[i].data), mime: String(files[i].mime || 'image/jpeg') });
+    }
+  } else if (fileBase64) {
+    list.push({ data: String(fileBase64), mime: String(mimeType || 'image/jpeg') });
+  }
+  if (!list.length) throw new Error('No file received.');
+  for (var v = 0; v < list.length; v++) {
+    if (['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].indexOf(list[v].mime) === -1) {
+      throw new Error('Please upload photos (JPG/PNG) or a PDF.');
+    }
   }
 
   var prompt =
     'You are reading a school exam paper (it may be in Malay or English). ' +
+    (list.length > 1 ? 'The paper spans ' + list.length + ' photos — read them in order as ONE paper. ' : '') +
     'Extract EVERY multiple-choice question exactly as written, keeping the original language. ' +
     'For each question, also determine the correct answer yourself. ' +
     'Skip essay, fill-in-the-blank and matching questions. Maximum 50 questions. ' +
@@ -1249,6 +1263,9 @@ function extractQuiz(fileBase64, mimeType) {
     '[{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] ' +
     'where "correct" is the position of the right option counting from 1. ' +
     'If the paper has no multiple-choice questions, output [].';
+
+  var parts = list.map(function (f) { return { inline_data: { mime_type: f.mime, data: f.data } }; });
+  parts.push({ text: prompt });
 
   var res = UrlFetchApp.fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL +
@@ -1258,10 +1275,7 @@ function extractQuiz(fileBase64, mimeType) {
       contentType: 'application/json',
       muteHttpExceptions: true,
       payload: JSON.stringify({
-        contents: [{ parts: [
-          { inline_data: { mime_type: mimeType, data: String(fileBase64) } },
-          { text: prompt },
-        ] }],
+        contents: [{ parts: parts }],
         generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
       }),
     }
@@ -2282,7 +2296,7 @@ function routePost(action, b) {
     case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
-    case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime);
+    case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime, b.files);
     case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students

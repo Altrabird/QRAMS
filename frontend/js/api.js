@@ -72,7 +72,8 @@ const Api = {
   deleteTaskApp(taskId) { return this._post('deleteTaskApp', { taskId }); },
   getQuiz(taskId) { return this._get('getQuiz', { taskId }); },
   saveQuiz(taskId, questions) { return this._post('saveQuiz', { taskId, questions }); },
-  extractQuiz(file, mime) { return this._post('extractQuiz', { file, mime }); },
+  // payload: { file, mime } for one file, or { files: [{data, mime}, …] } for multi-page photos
+  extractQuiz(payload) { return this._post('extractQuiz', payload); },
   hasGeminiKey() { return this._get('hasGeminiKey'); },
   saveGeminiKey(key) { return this._post('saveGeminiKey', { key }); },
   saveCampaign(c) { return this._post('saveCampaign', c); },

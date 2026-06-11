@@ -314,10 +314,14 @@ async function taskModal(taskId) {
         <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
           <label class="form-label small fw-semibold mb-0">Questions</label>
           <span class="badge text-bg-light" id="qbCount">0</span>
-          <button type="button" class="btn btn-sm btn-success ms-auto" id="qbUploadBtn"><i class="bi bi-camera me-1"></i>Upload exam paper</button>
+          <div class="btn-group ms-auto">
+            <button type="button" class="btn btn-sm btn-success" id="qbSnapBtn" title="Take a photo of the exam paper"><i class="bi bi-camera me-1"></i>Snap paper</button>
+            <button type="button" class="btn btn-sm btn-outline-success" id="qbUploadBtn" title="Upload photos or a PDF of the exam paper"><i class="bi bi-image me-1"></i>Upload</button>
+          </div>
           <button type="button" class="btn btn-sm btn-outline-secondary" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
           <button type="button" class="btn btn-sm btn-primary" id="qbAddBtn"><i class="bi bi-plus-lg me-1"></i>Add question</button>
-          <input type="file" id="qbFile" accept="image/*,application/pdf" class="d-none">
+          <input type="file" id="qbFile" accept="image/*,application/pdf" multiple class="d-none">
+          <input type="file" id="qbCam" accept="image/*" capture="environment" class="d-none">
         </div>
         <div class="d-none border rounded p-2 mb-2" id="qbAiArea">
           <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.
@@ -382,8 +386,11 @@ async function taskModal(taskId) {
   UI.el('qbAddBtn').onclick = () => { _quizDraft.push(emptyQuestion()); qbRender(); };
   UI.el('qbAiBtn').onclick = () => UI.el('qbAiArea').classList.toggle('d-none');
   UI.el('qbParseBtn').onclick = qbParseAI;
-  UI.el('qbUploadBtn').onclick = () => UI.el('qbFile').click();
-  UI.el('qbFile').onchange = (e) => { const f = e.target.files[0]; if (f) qbUploadPaper(f); e.target.value = ''; };
+  UI.el('qbSnapBtn').onclick = () => UI.el('qbCam').click();   // opens the phone camera directly
+  UI.el('qbUploadBtn').onclick = () => UI.el('qbFile').click(); // gallery / files (multi-select)
+  const onPickPaper = (e) => { if (e.target.files.length) qbUploadPaper([...e.target.files]); e.target.value = ''; };
+  UI.el('qbFile').onchange = onPickPaper;
+  UI.el('qbCam').onchange = onPickPaper;
 
   UI.el('saveTaskBtn').onclick = async () => {
     const f = UI.el('taskForm');
@@ -547,25 +554,34 @@ function fileToBase64(file) {
   });
 }
 
-/** Send the exam paper to the backend AI and drop the questions into the builder. */
-async function qbUploadPaper(file) {
-  const btn = UI.el('qbUploadBtn');
+/** Send the exam paper (camera snap, photo(s) or a PDF) to the AI and drop the
+    questions into the builder. Multiple photos are read together as ONE paper. */
+async function qbUploadPaper(files) {
+  const snapBtn = UI.el('qbSnapBtn'), upBtn = UI.el('qbUploadBtn');
+  const setBusy = (busy) => {
+    if (snapBtn) { snapBtn.disabled = busy; snapBtn.innerHTML = busy ? '<span class="spinner-border spinner-border-sm me-1"></span>Reading…' : '<i class="bi bi-camera me-1"></i>Snap paper'; }
+    if (upBtn) upBtn.disabled = busy;
+  };
   try {
-    let base64, mime;
-    if (file.type === 'application/pdf') {
-      if (file.size > 8 * 1024 * 1024) return UI.toast('PDF too big (max 8 MB) — photo the pages instead.', 'warning');
-      base64 = await fileToBase64(file);
-      mime = 'application/pdf';
-    } else if (file.type.startsWith('image/')) {
-      base64 = await shrinkImage(file);
-      mime = 'image/jpeg';
+    files = [...files];
+    let payload;
+    const pdf = files.find(f => f.type === 'application/pdf');
+    if (pdf) {
+      if (files.length > 1) return UI.toast('Upload a PDF on its own (or pick photos only).', 'warning');
+      if (pdf.size > 8 * 1024 * 1024) return UI.toast('PDF too big (max 8 MB) — photo the pages instead.', 'warning');
+      payload = { file: await fileToBase64(pdf), mime: 'application/pdf' };
     } else {
-      return UI.toast('Please choose a photo (JPG/PNG) or a PDF.', 'warning');
+      const imgs = files.filter(f => f.type.startsWith('image/')).slice(0, 6);
+      if (!imgs.length) return UI.toast('Please choose photos (JPG/PNG) or a PDF.', 'warning');
+      setBusy(true); // shrinking several photos can take a moment
+      const pages = [];
+      for (const f of imgs) pages.push({ data: await shrinkImage(f), mime: 'image/jpeg' });
+      // One photo uses the simple shape (works on older backends); 2+ pages need the newer backend.
+      payload = pages.length === 1 ? { file: pages[0].data, mime: 'image/jpeg' } : { files: pages };
     }
 
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Reading paper…';
-    const r = await Api.extractQuiz(base64, mime);
+    setBusy(true);
+    const r = await Api.extractQuiz(payload);
 
     const parsed = r.questions.map(q => ({
       q: q.question, options: [...q.options, '', '', ''].slice(0, 4), correct: q.correct || 'A',
@@ -573,12 +589,11 @@ async function qbUploadPaper(file) {
     const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
     _quizDraft = blank ? parsed : _quizDraft.concat(parsed);
     qbRender();
-    UI.toast(`Found ${parsed.length} question(s) — please CHECK the ticked answers before saving!`, 'warning');
+    UI.toast(`Added ${parsed.length} question(s) — CHECK the ticked answers! Snap the next page to add more.`, 'warning');
   } catch (err) {
     UI.toast(err.message, 'danger');
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-camera me-1"></i>Upload exam paper';
+    setBusy(false);
   }
 }
 async function duplicateTask(id) {
