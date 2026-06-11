@@ -937,6 +937,7 @@ async function renderQRDetail(token) {
           <div class="row g-3 mb-3">
             ${miniStat('Scans', qr.scanCount || 0)}${miniStat('Points', qr.points || 0)}
             ${miniStat('Score', qr.maxScore ? ((qr.score || 0) + ' / ' + qr.maxScore) : '—')}
+            ${miniStat('Tries', (() => { const f = scans.filter(s => s.action === 'attempt').length; const t = qr.progress === 'Completed' ? f + 1 : f; return t || '—'; })())}
             ${miniStat('First scan', UI.dateTime(qr.firstScan))}${miniStat('Last scan', UI.dateTime(qr.lastScan))}
           </div>
           <div class="mb-3"><span class="small text-secondary">Task:</span> <b>${UI.esc(task ? task.title : qr.taskId)}</b></div>
@@ -951,7 +952,9 @@ async function renderQRDetail(token) {
           </div>
           <div class="section-head"><h2>Scan history</h2></div>
           ${scans.length ? `<div class="table-responsive"><table class="table table-sm"><thead><tr><th>When</th><th>Device</th></tr></thead>
-            <tbody>${scans.map(s => `<tr><td>${UI.dateTime(s.timestamp)}</td><td><span class="badge text-bg-light">${UI.esc(s.deviceType)}</span></td></tr>`).join('')}</tbody></table></div>`
+            <tbody>${scans.map(s => `<tr><td>${UI.dateTime(s.timestamp)}</td><td>${s.action === 'attempt'
+              ? '<span class="badge text-bg-warning">quiz try ✗</span>'
+              : `<span class="badge text-bg-light">${UI.esc(s.deviceType)}</span>`}</td></tr>`).join('')}</tbody></table></div>`
             : '<p class="small text-secondary">No scans yet.</p>'}
         </div></div>
       </div>`;

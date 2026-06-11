@@ -188,29 +188,60 @@
     }
 
     /* ------------------------------ 4. result ------------------------------ */
+    /* MASTERY MODE: keep trying until everything is correct.
+       - Not all correct  → show WHICH ones are wrong (never the answers) + Try again.
+       - All correct      → task complete, full points. 🎉
+       - Played after that → practice round, no extra points.                       */
     function showResult(d) {
-      const pct = d.max ? d.score / d.max : 0;
-      const stars = pct >= 0.9 ? '⭐⭐⭐' : pct >= 0.6 ? '⭐⭐' : pct >= 0.3 ? '⭐' : '💪';
-      const cheer = pct >= 0.9 ? 'Amazing work!' : pct >= 0.6 ? 'Well done!' : pct >= 0.3 ? 'Good try!' : 'Keep practising!';
+      // Not mastered yet → encourage + retry (answers stay secret).
+      if (!d.mastered && !d.already) {
+        card.innerHTML = `
+          <div class="center">
+            <div class="big">💪</div>
+            <div class="title">Almost there!</div>
+            <div class="score">${d.score} / ${d.max}</div>
+            <p class="muted">Get ALL of them correct to finish this task.</p>
+            <div class="review">
+              <h3>Which ones to look at again</h3>
+              ${d.review.map(v => `
+                <div class="rev">
+                  <span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span>
+                  <span>Q${v.qNo}${v.ok ? ' — correct!' : ' — try a different answer'}</span>
+                </div>`).join('')}
+            </div>
+            <button class="btn" id="retryBtn" style="margin-top:16px">Try again 🔁</button>
+            <p class="muted" style="margin-top:10px">Attempt ${d.attempts} · you can try as many times as you need.</p>
+          </div>`;
+        document.getElementById('retryBtn').onclick = () => {
+          picked = new Array(quiz.questions.length).fill('');
+          current = 0;
+          showQuestion();
+        };
+        return;
+      }
+
+      // Mastered (or practice round after mastery) → celebrate + full review.
+      const tries = d.attempts || 1;
       card.innerHTML = `
         <div class="center">
-          <div class="big">${pct >= 0.6 ? '🎉' : '🌟'}</div>
-          <div class="title">${cheer}</div>
+          <div class="big">🎉</div>
+          <div class="title">${d.already ? 'Practice complete!' : 'All correct — task complete!'}</div>
           <div class="score">${d.score} / ${d.max}</div>
-          <div class="stars">${stars}</div>
+          <div class="stars">⭐⭐⭐</div>
           ${d.already
-            ? `<div class="note">Practice round — your first score is the one that counts.</div>`
-            : `<div class="pts">+${d.points} points</div>`}
+            ? `<div class="note">Practice round — you already finished this task, so no extra points.</div>`
+            : `<div class="pts">+${d.points} points</div>
+               <p class="muted">${tries === 1 ? 'First try — superb! 🌟' : 'You did it in ' + tries + ' tries — well done for not giving up!'}</p>`}
           <div class="review">
-            <h3>Check your answers</h3>
+            <h3>Your answers</h3>
             ${d.review.map(v => `
               <div class="rev">
                 <span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span>
-                <span>Q${v.qNo}: you chose <b>${esc(v.your || '—')}</b>${v.ok ? '' :
+                <span>Q${v.qNo}: <b>${esc(v.your || '—')}</b>${v.ok || !v.correct ? '' :
                   ` · correct: <span class="fix">${esc(v.correct)}</span>`}</span>
               </div>`).join('')}
           </div>
-          <p class="muted" style="margin-top:14px">Your result is saved. You can close this page. 👍</p>
+          <p class="muted" style="margin-top:14px">${d.already ? 'You can close this page. 👍' : 'Your result is saved. You can close this page. 👍'}</p>
         </div>`;
     }
 

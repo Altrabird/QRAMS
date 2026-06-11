@@ -546,14 +546,17 @@ function playInfo(token, userAgent) {
 
 /**
  * PUBLIC: grade a finished quiz. `answersCsv` is e.g. "A,C,B,D,A".
- * Records score + points on the FIRST completion only; later attempts are
- * marked review-only (so nobody can grind points by repeating).
+ *
+ * MASTERY MODE: the pupil retries as many times as needed until EVERY answer
+ * is correct. Failed tries are recorded (so the teacher sees how many were
+ * needed) but reveal only WHICH questions are wrong — never the answers.
+ * Full marks → the task completes with FULL points. After that, replays are
+ * practice only (no extra points).
  */
 function finishQuiz(token, answersCsv) {
   token = clean(token);
   var qr = getQR(token);
   if (!qr) return { kind: 'unknown', message: 'This code is not recognised.' };
-  var task = getTask(qr.taskId) || {};
   var full = getQuiz(qr.taskId);
   if (!full.length) return { kind: 'unknown', message: 'This quiz has no questions.' };
 
@@ -568,13 +571,33 @@ function finishQuiz(token, answersCsv) {
 
   var alreadyDone = String(qr.progress) === 'Completed';
   var blocked = qr.status === 'Disabled' || qr.status === 'Expired';
-  var result = { kind: 'result', score: score, max: full.length, review: review, already: alreadyDone, points: 0 };
+  var failedTries = findWhere(SHEETS.SCAN_LOGS, 'token', token)
+    .filter(function (s) { return String(s.action) === 'attempt'; }).length;
+  var mastered = score === full.length;
 
-  if (!alreadyDone && !blocked) {
-    var saved = submitResult(token, score, full.length); // records completion + points + badges
-    result.points = (saved && saved.points) || 0;
+  // Practice after mastery (or a blocked code): show the full review, no points.
+  if (alreadyDone || blocked) {
+    return { kind: 'result', mastered: mastered, already: true, score: score, max: full.length,
+             attempts: failedTries + 1, review: review, points: 0 };
   }
-  return result;
+
+  if (mastered) {
+    // Mastery achieved → complete the task with FULL points.
+    var saved = submitResult(token, full.length, full.length);
+    return { kind: 'result', mastered: true, already: false, score: score, max: full.length,
+             attempts: failedTries + 1, review: review, points: (saved && saved.points) || 0 };
+  }
+
+  // Not there yet: log the try, nudge progress, and return review WITHOUT answers.
+  appendRow(SHEETS.SCAN_LOGS, {
+    logId: uid('TRY'), token: token, taskId: qr.taskId, entityId: qr.entityId,
+    timestamp: nowIso(), deviceType: 'quiz', userAgent: '', action: 'attempt',
+  });
+  updateWhere(SHEETS.QR_CODES, 'token', token, { progress: 'In Progress', lastScan: nowIso() });
+  invalidateDashboard();
+  var safeReview = review.map(function (v) { return { qNo: v.qNo, your: v.your, ok: v.ok }; });
+  return { kind: 'result', mastered: false, already: false, score: score, max: full.length,
+           attempts: failedTries + 1, review: safeReview, points: 0 };
 }
 
 /* ---- Hosted quiz storage (the HTML that QRAMS serves itself) ---- */
