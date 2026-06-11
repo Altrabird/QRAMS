@@ -642,7 +642,8 @@ async function renderGenerator(preselectTaskId) {
         </div>
         <div class="col-lg-8"><div class="card p-3 border-0">
           <div class="section-head no-print"><h2 id="gridTitle">QR codes</h2>
-            <span class="badge text-bg-light ms-auto" id="qrCount">0</span></div>
+            <button class="btn btn-sm btn-outline-secondary ms-auto" id="genViewBtn"><i class="bi bi-table me-1"></i>Results</button>
+            <span class="badge text-bg-light" id="qrCount">0</span></div>
           <div id="qrGridArea"></div>
         </div></div>
       </div>`;
@@ -664,6 +665,7 @@ async function renderGenerator(preselectTaskId) {
     };
     typeSel.onchange = renderTarget; renderTarget();
     UI.el('genTask').onchange = () => loadGeneratorGrid();
+    UI.el('genViewBtn').onclick = () => { _genView = _genView === 'qr' ? 'results' : 'qr'; renderGenArea(); };
     UI.el('qrColor').oninput = (e) => { QRGen.brandColor = e.target.value; loadGeneratorGrid(); };
     UI.el('genBtn').onclick = doGenerate;
     UI.el('pdfBtn').onclick = () => _genQRs.length ? QRGen.downloadPdf(_genQRs, _genTask?.title) : UI.toast('Nothing to export', 'warning');
@@ -672,23 +674,60 @@ async function renderGenerator(preselectTaskId) {
   } catch (err) { UI.error(err.message); }
 }
 
-let _genQRs = [];
+let _genQRs = [], _genView = 'qr'; // 'qr' grid or 'results' table
 async function loadGeneratorGrid() {
   const taskId = UI.el('genTask')?.value;
   if (!taskId) return;
   _genTask = _tasksCache.find(t => t.taskId === taskId);
-  UI.el('gridTitle').textContent = 'QR codes · ' + (_genTask ? _genTask.title : '');
   UI.el('qrGridArea').innerHTML = '<div class="spinner-border text-primary"></div>';
   try {
     _genQRs = await Api.listQRCodes(taskId);
-    QRGen.renderGrid(UI.el('qrGridArea'), _genQRs, _genTask?.title);
-    UI.el('qrCount').textContent = _genQRs.length;
-    // clicking a card opens its detail
-    UI.el('qrGridArea').querySelectorAll('.qr-card').forEach(card => {
-      card.classList.add('cursor-pointer');
-      card.onclick = () => Router.go('#/qr/' + card.dataset.token);
-    });
+    renderGenArea();
   } catch (err) { UI.el('qrGridArea').innerHTML = `<div class="text-danger small">${UI.esc(err.message)}</div>`; }
+}
+
+/* Draw the right-hand area in the chosen view (QR cards, or the Results table). */
+function renderGenArea() {
+  const title = _genTask ? _genTask.title : '';
+  UI.el('qrCount').textContent = _genQRs.length;
+  const btn = UI.el('genViewBtn');
+  if (btn) btn.innerHTML = _genView === 'qr'
+    ? '<i class="bi bi-table me-1"></i>Results'
+    : '<i class="bi bi-qr-code me-1"></i>QR codes';
+
+  if (_genView === 'results') {
+    UI.el('gridTitle').textContent = 'Results · ' + title;
+    UI.el('qrGridArea').innerHTML = genResultsTable(_genQRs);
+    return;
+  }
+  UI.el('gridTitle').textContent = 'QR codes · ' + title;
+  QRGen.renderGrid(UI.el('qrGridArea'), _genQRs, title);
+  // clicking a card opens its detail
+  UI.el('qrGridArea').querySelectorAll('.qr-card').forEach(card => {
+    card.classList.add('cursor-pointer');
+    card.onclick = () => Router.go('#/qr/' + card.dataset.token);
+  });
+}
+
+/* Class results table: progress, score, TRIES (effort indicator), points. */
+function genResultsTable(list) {
+  if (!list.length) return UI.emptyState('table', 'No results yet', 'Generate QR codes first — results appear once pupils start scanning.');
+  const rows = [...list].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  return `<div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+    <thead><tr><th>Pupil</th><th>Class</th><th>Progress</th>
+      <th class="text-center">Score</th><th class="text-center">Tries</th>
+      <th class="text-end">Points</th><th>Last activity</th></tr></thead>
+    <tbody>${rows.map(q => `<tr class="cursor-pointer" onclick="Router.go('#/qr/${UI.esc(q.token)}')">
+      <td><div class="fw-semibold">${UI.esc(q.label)}</div><div class="small text-secondary">${UI.esc(q.entityId)}</div></td>
+      <td class="small">${UI.esc(q.className || '—')}</td>
+      <td>${UI.progressPill(q.progress)}</td>
+      <td class="text-center">${q.maxScore ? `${q.score || 0} / ${q.maxScore}` : '—'}</td>
+      <td class="text-center">${Number(q.tries) ? `<span class="badge ${q.progress === 'Completed' ? 'text-bg-success' : 'text-bg-warning'}">${q.tries}</span>` : '—'}</td>
+      <td class="text-end fw-bold">${q.points || 0}</td>
+      <td class="small text-secondary">${UI.dateTime(q.lastScan)}</td></tr>`).join('')}</tbody></table></div>
+  <p class="small text-secondary mt-2 mb-0"><i class="bi bi-info-circle me-1"></i>
+    <b>Tries</b> = attempts needed to reach 100%. One try means they found it easy;
+    many tries means real effort — and a topic worth revisiting with them.</p>`;
 }
 
 async function doGenerate() {

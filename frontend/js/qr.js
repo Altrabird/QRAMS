@@ -13,15 +13,21 @@ const QRGen = {
 
   pngDataUrl(text, size = 320) { return this.canvas(text, size).toDataURL('image/png'); },
 
-  /* One printable card: QR + name + id + class + task title. */
+  /* One printable card: QR + name + id + class + task title.
+     The live status/tries chip is no-print so it never shows on handouts. */
   cardHtml(qr, taskTitle) {
     const url = UI.scanUrl(qr.token);
+    const t = Number(qr.tries || 0);
+    const state = qr.progress === 'Completed'
+      ? `<div class="qr-state done no-print">✓ Done${t ? ` · ${t} ${t > 1 ? 'tries' : 'try'}` : ''}</div>`
+      : (t ? `<div class="qr-state prog no-print">⏳ ${t} ${t > 1 ? 'tries' : 'try'} so far</div>` : '');
     return `<div class="qr-card" data-token="${UI.esc(qr.token)}">
         <img alt="QR for ${UI.esc(qr.label)}" src="${this.pngDataUrl(url, 300)}">
         <div class="qr-name">${UI.esc(qr.label)}</div>
         <div class="qr-meta">${UI.esc(qr.entityId)}${qr.className ? ' · ' + UI.esc(qr.className) : ''}</div>
         <div class="qr-meta">${UI.esc(taskTitle || '')}</div>
         <div class="qr-meta text-muted" style="font-size:.66rem">${UI.esc(qr.token)}</div>
+        ${state}
       </div>`;
   },
 

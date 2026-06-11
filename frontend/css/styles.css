@@ -93,6 +93,9 @@ body{ background:var(--app-bg); }
 .qr-card .qr-name{ font-weight:700;margin-top:8px;font-size:.95rem; }
 .qr-card .qr-meta{ font-size:.78rem;color:#475569; }
 .qr-grid{ display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+.qr-state{ font-size:.74rem;font-weight:700;margin-top:6px; }
+.qr-state.done{ color:#059669; }
+.qr-state.prog{ color:#d97706; }
 
 /* progress + status pills */
 .pill{ font-size:.72rem;padding:.18rem .55rem;border-radius:999px;font-weight:600; }

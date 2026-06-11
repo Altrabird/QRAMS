@@ -260,7 +260,21 @@ function resolveTargets(payload) {
 
 /** All QR codes, optionally filtered by taskId. */
 function listQRCodes(taskId) {
-  return taskId ? findWhere(SHEETS.QR_CODES, 'taskId', taskId) : readAll(SHEETS.QR_CODES);
+  if (!taskId) return readAll(SHEETS.QR_CODES);
+  var rows = findWhere(SHEETS.QR_CODES, 'taskId', taskId);
+
+  // Attach TRIES per pupil (effort indicator): failed quiz attempts are logged
+  // in Scan_Logs as action='attempt'; the successful final try adds +1.
+  var fails = {};
+  findWhere(SHEETS.SCAN_LOGS, 'taskId', taskId).forEach(function (s) {
+    if (String(s.action) === 'attempt') fails[s.token] = (fails[s.token] || 0) + 1;
+  });
+  rows.forEach(function (q) {
+    var f = fails[q.token] || 0;
+    // maxScore set = finished through the quiz/score path, so the winning try counts.
+    q.tries = (String(q.progress) === 'Completed' && q.maxScore) ? f + 1 : f;
+  });
+  return rows;
 }
 
 function getQR(token) { return findOne(SHEETS.QR_CODES, 'token', token); }
