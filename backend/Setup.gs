@@ -63,6 +63,7 @@ function applyValidation(book) {
   addDropdown(book, SHEETS.TASKS, 'status', ENUMS.taskStatus);
   addDropdown(book, SHEETS.TASKS, 'completionMode', ENUMS.completionMode);
   addDropdown(book, SHEETS.TASKS, 'appType', ENUMS.appType);
+  addDropdown(book, SHEETS.QUIZ_QUESTIONS, 'correct', ENUMS.quizCorrect);
   addDropdown(book, SHEETS.QR_CODES, 'status', ENUMS.qrStatus);
   addDropdown(book, SHEETS.QR_CODES, 'progress', ENUMS.progress);
   // Phase 2 columns

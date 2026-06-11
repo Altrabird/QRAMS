@@ -69,8 +69,13 @@ const UI = {
     return `<span class="badge text-bg-${map[s] || 'secondary'}">${this.esc(s)}</span>`;
   },
 
-  /* Build the scan URL a QR should encode: <API>?id=<token>. */
+  /* Build the scan URL a QR should encode. New codes point at the QRAMS quiz
+     player page (clean URL, handles every task type: it plays built-in quizzes
+     and forwards link/hosted tasks). Falls back to the old GAS ?id= form if no
+     player URL is configured. Old printed QRs keep working via GAS. */
   scanUrl(token) {
+    const player = QRAMS.getPlayerUrl();
+    if (player) return player + '?t=' + encodeURIComponent(token);
     const base = QRAMS.getApiUrl();
     return base ? base + '?id=' + encodeURIComponent(token) : '';
   },

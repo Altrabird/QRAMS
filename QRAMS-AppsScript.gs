@@ -46,6 +46,10 @@ const CONFIG = {
   // Default master link used if a QR's task somehow has none (safety net).
   FALLBACK_REDIRECT: 'https://www.google.com',
 
+  // The public quiz-player page (part of the frontend on GitHub Pages).
+  // New QR codes point HERE — a clean URL with no Google account/sandbox issues.
+  PLAYER_URL: 'https://altrabird.github.io/QRAMS/quiz.html',
+
   // Roles allowed in the system.
   ROLES: ['admin', 'teacher', 'viewer'],
 };
@@ -73,6 +77,7 @@ const SHEETS = {
   STUDENT_BADGES: 'Student_Badges', // which pupil earned which badge (1 row each)
   CERTIFICATES: 'Certificates',     // issued, QR-verifiable certificates
   TASK_APPS: 'Task_Apps',           // teacher-pasted quiz/app HTML that QRAMS hosts itself
+  QUIZ_QUESTIONS: 'Quiz_Questions', // built-in quiz questions (one row per question)
 };
 
 /**
@@ -134,6 +139,11 @@ const SCHEMA = {
   // ---- Task output integration ----
   // Quiz/app HTML pasted by a teacher that QRAMS hosts and serves itself.
   Task_Apps: ['taskId', 'html', 'updatedAt'],
+
+  // Built-in quizzes: ONE ROW PER QUESTION — teachers can even edit these
+  // directly in the sheet. `correct` is the letter A/B/C/D. Leave optionC/D
+  // blank for 2- or 3-option questions.
+  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -144,7 +154,10 @@ const ENUMS = {
   progress: ['Not Started', 'Opened', 'Started', 'In Progress', 'Submitted', 'Reviewed', 'Completed'],
   completionMode: ['auto', 'manual', 'form', 'quiz', 'evidence', 'time'],
   entityType: ['student', 'group', 'class', 'teacher', 'event', 'custom'],
-  appType: ['link', 'hosted'], // 'link' = external master link; 'hosted' = QRAMS serves the quiz
+  // 'link' = external master link · 'quiz' = built-in quiz (Quiz_Questions sheet,
+  // played on the QRAMS player page) · 'hosted' = teacher-pasted HTML served by GAS
+  appType: ['link', 'quiz', 'hosted'],
+  quizCorrect: ['A', 'B', 'C', 'D'],
 
   // ---- Phase 2 ----
   // Badge rules live as a short text string in the Badges sheet's `criteria`
@@ -660,7 +673,7 @@ function getTask(taskId) { return findOne(SHEETS.TASKS, 'taskId', taskId); }
 
 /** Create (no taskId) or update (taskId given) a task. */
 function saveTask(payload) {
-  var appType = clean(payload.appType) === 'hosted' ? 'hosted' : 'link';
+  var appType = ENUMS.appType.indexOf(clean(payload.appType)) !== -1 ? clean(payload.appType) : 'link';
   var common = {
     campaignId: clean(payload.campaignId),
     title: clean(payload.title), description: clean(payload.description),
@@ -1007,6 +1020,10 @@ function webAppUrl() {
 
 /** Where a scan should send the pupil, passing their token so results can come back. */
 function buildTaskUrl(task, token) {
+  if (task && String(task.appType) === 'quiz') {
+    // Built-in quiz → the QRAMS player page (clean URL, no Google sandbox).
+    return CONFIG.PLAYER_URL + '?t=' + encodeURIComponent(token);
+  }
   if (task && String(task.appType) === 'hosted') {
     return webAppUrl() + '?app=' + encodeURIComponent(task.taskId) + '&qid=' + encodeURIComponent(token);
   }
@@ -1052,6 +1069,115 @@ function submitResult(token, score, max) {
     Logger.log('submitResult error ' + token + ': ' + err);
     return { ok: false, message: 'Could not save your result.' };
   }
+}
+
+/* ================= BUILT-IN QUIZZES (QRAMS makes & marks them) ================= */
+/* Questions live as ROWS in the Quiz_Questions sheet, so teachers can edit them
+   in the UI or straight in Google Sheets. The pupil-facing player (quiz.html on
+   the frontend) calls the two PUBLIC endpoints below; the correct answers never
+   leave the server until the pupil has submitted (no peeking in dev tools). */
+
+/** Teacher read (auth'd): full questions including the correct letters. */
+function getQuiz(taskId) {
+  var rows = findWhere(SHEETS.QUIZ_QUESTIONS, 'taskId', clean(taskId))
+    .sort(function (a, b) { return Number(a.qNo) - Number(b.qNo); });
+  return rows.map(function (r) {
+    return {
+      qNo: Number(r.qNo), question: String(r.question || ''),
+      options: [r.optionA, r.optionB, r.optionC, r.optionD].map(function (o) { return String(o == null ? '' : o); }),
+      correct: String(r.correct || 'A').toUpperCase(),
+    };
+  });
+}
+
+/** Replace a task's whole question set (from the builder UI). */
+function saveQuiz(taskId, questions) {
+  taskId = clean(taskId);
+  if (!taskId) throw new Error('taskId is required.');
+  if (!questions || !questions.length) throw new Error('Add at least one question.');
+  if (questions.length > 50) throw new Error('Maximum 50 questions per quiz.');
+
+  var letters = ['A', 'B', 'C', 'D'];
+  var rows = questions.map(function (q, i) {
+    var opts = (q.options || []).map(function (o) { return clean(o); });
+    var correct = String(q.correct || 'A').toUpperCase();
+    if (!clean(q.question)) throw new Error('Question ' + (i + 1) + ' has no text.');
+    if (!opts[0] || !opts[1]) throw new Error('Question ' + (i + 1) + ' needs at least options A and B.');
+    if (letters.indexOf(correct) === -1) throw new Error('Question ' + (i + 1) + ': correct must be A–D.');
+    if (!opts[letters.indexOf(correct)]) throw new Error('Question ' + (i + 1) + ': the correct option is empty.');
+    return {
+      taskId: taskId, qNo: i + 1, question: clean(q.question),
+      optionA: opts[0] || '', optionB: opts[1] || '', optionC: opts[2] || '', optionD: opts[3] || '',
+      correct: correct,
+    };
+  });
+
+  deleteAllWhere(SHEETS.QUIZ_QUESTIONS, 'taskId', taskId);
+  appendRows(SHEETS.QUIZ_QUESTIONS, rows);
+  updateWhere(SHEETS.TASKS, 'taskId', taskId, { appType: 'quiz', updatedAt: nowIso() });
+  invalidateDashboard();
+  return { taskId: taskId, questions: rows.length };
+}
+
+/**
+ * PUBLIC: the player page loads → logs the scan and returns what to show.
+ * For quiz tasks the questions are sent WITHOUT the correct answers.
+ * For link/hosted tasks the player just redirects to the returned URL.
+ */
+function playInfo(token, userAgent) {
+  token = clean(token);
+  var dest = handleScan(token, userAgent); // logs the scan + all side effects
+  var qr = getQR(token);
+  if (!qr) return { kind: 'unknown', message: 'This code is not recognised.' };
+  var task = getTask(qr.taskId) || {};
+
+  if (String(task.appType) === 'quiz') {
+    var qs = getQuiz(qr.taskId).map(function (q) {
+      return { qNo: q.qNo, question: q.question, options: q.options.filter(function (o) { return o !== ''; }) };
+    });
+    if (!qs.length) return { kind: 'unknown', message: 'This quiz has no questions yet.' };
+    return {
+      kind: 'quiz', name: qr.label, taskTitle: task.title, subject: task.subject || '',
+      points: Number(task.pointsValue) || 0,
+      already: String(qr.progress) === 'Completed',
+      questions: qs,
+    };
+  }
+  // External link or hosted HTML: the player simply forwards the pupil.
+  return { kind: 'redirect', url: dest };
+}
+
+/**
+ * PUBLIC: grade a finished quiz. `answersCsv` is e.g. "A,C,B,D,A".
+ * Records score + points on the FIRST completion only; later attempts are
+ * marked review-only (so nobody can grind points by repeating).
+ */
+function finishQuiz(token, answersCsv) {
+  token = clean(token);
+  var qr = getQR(token);
+  if (!qr) return { kind: 'unknown', message: 'This code is not recognised.' };
+  var task = getTask(qr.taskId) || {};
+  var full = getQuiz(qr.taskId);
+  if (!full.length) return { kind: 'unknown', message: 'This quiz has no questions.' };
+
+  var answers = String(answersCsv || '').toUpperCase().split(',');
+  var review = [], score = 0;
+  full.forEach(function (q, i) {
+    var your = clean(answers[i] || '');
+    var ok = your === q.correct;
+    if (ok) score++;
+    review.push({ qNo: q.qNo, your: your, correct: q.correct, ok: ok });
+  });
+
+  var alreadyDone = String(qr.progress) === 'Completed';
+  var blocked = qr.status === 'Disabled' || qr.status === 'Expired';
+  var result = { kind: 'result', score: score, max: full.length, review: review, already: alreadyDone, points: 0 };
+
+  if (!alreadyDone && !blocked) {
+    var saved = submitResult(token, score, full.length); // records completion + points + badges
+    result.points = (saved && saved.points) || 0;
+  }
+  return result;
 }
 
 /* ---- Hosted quiz storage (the HTML that QRAMS serves itself) ---- */
@@ -1216,7 +1342,8 @@ function deleteTask(taskId) {
   deleteAllWhere(SHEETS.COMPLETION_LOGS, 'taskId', taskId);
   deleteAllWhere(SHEETS.POINTS_LOG, 'taskId', taskId);
   deleteAllWhere(SHEETS.QR_CODES, 'taskId', taskId);
-  deleteWhere(SHEETS.TASK_APPS, 'taskId', taskId); // remove any hosted quiz too
+  deleteWhere(SHEETS.TASK_APPS, 'taskId', taskId);            // remove any hosted quiz too
+  deleteAllWhere(SHEETS.QUIZ_QUESTIONS, 'taskId', taskId);    // and built-in quiz questions
   deleteWhere(SHEETS.TASKS, 'taskId', taskId);
   invalidateDashboard();
   return { deleted: taskId, qrCodes: qrCount };
@@ -1697,6 +1824,7 @@ function applyValidation(book) {
   addDropdown(book, SHEETS.TASKS, 'status', ENUMS.taskStatus);
   addDropdown(book, SHEETS.TASKS, 'completionMode', ENUMS.completionMode);
   addDropdown(book, SHEETS.TASKS, 'appType', ENUMS.appType);
+  addDropdown(book, SHEETS.QUIZ_QUESTIONS, 'correct', ENUMS.quizCorrect);
   addDropdown(book, SHEETS.QR_CODES, 'status', ENUMS.qrStatus);
   addDropdown(book, SHEETS.QR_CODES, 'progress', ENUMS.progress);
   // Phase 2 columns
@@ -1967,6 +2095,12 @@ function doGet(e) {
     return resultPage(submitResult(p.done, p.score, p.max));
   }
 
+  // A5) QUIZ PLAYER API (public JSON, keyed by the unguessable QR token):
+  //   ?play=<token>            → logs the scan, returns quiz questions or a redirect
+  //   ?finish=<token>&a=A,B,…  → grades the answers, records score + points
+  if (p.play)   { return jsonOk(playInfo(p.play, p.ua || '')); }
+  if (p.finish) { return jsonOk(finishQuiz(p.finish, p.a)); }
+
   // A4) HOSTED QUIZ: serve a teacher-pasted quiz with the score hook wired in.
   if (p.app) {
     return appPage(p.app, p.qid || '');
@@ -2010,6 +2144,7 @@ function routeGet(action, p) {
     case 'listCertificates': requireRole(p.token, CONFIG.ROLES); return listCertificates(p.scopeId);
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
     case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
+    case 'getQuiz':          requireRole(p.token, CONFIG.ROLES); return getQuiz(p.taskId);
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -2049,6 +2184,7 @@ function routePost(action, b) {
     case 'duplicateTask':   requireRole(b.token, WRITERS); return duplicateTask(b.taskId);
     case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
+    case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);

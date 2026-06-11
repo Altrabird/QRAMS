@@ -23,6 +23,10 @@ const CONFIG = {
   // Default master link used if a QR's task somehow has none (safety net).
   FALLBACK_REDIRECT: 'https://www.google.com',
 
+  // The public quiz-player page (part of the frontend on GitHub Pages).
+  // New QR codes point HERE — a clean URL with no Google account/sandbox issues.
+  PLAYER_URL: 'https://altrabird.github.io/QRAMS/quiz.html',
+
   // Roles allowed in the system.
   ROLES: ['admin', 'teacher', 'viewer'],
 };
@@ -50,6 +54,7 @@ const SHEETS = {
   STUDENT_BADGES: 'Student_Badges', // which pupil earned which badge (1 row each)
   CERTIFICATES: 'Certificates',     // issued, QR-verifiable certificates
   TASK_APPS: 'Task_Apps',           // teacher-pasted quiz/app HTML that QRAMS hosts itself
+  QUIZ_QUESTIONS: 'Quiz_Questions', // built-in quiz questions (one row per question)
 };
 
 /**
@@ -111,6 +116,11 @@ const SCHEMA = {
   // ---- Task output integration ----
   // Quiz/app HTML pasted by a teacher that QRAMS hosts and serves itself.
   Task_Apps: ['taskId', 'html', 'updatedAt'],
+
+  // Built-in quizzes: ONE ROW PER QUESTION — teachers can even edit these
+  // directly in the sheet. `correct` is the letter A/B/C/D. Leave optionC/D
+  // blank for 2- or 3-option questions.
+  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -121,7 +131,10 @@ const ENUMS = {
   progress: ['Not Started', 'Opened', 'Started', 'In Progress', 'Submitted', 'Reviewed', 'Completed'],
   completionMode: ['auto', 'manual', 'form', 'quiz', 'evidence', 'time'],
   entityType: ['student', 'group', 'class', 'teacher', 'event', 'custom'],
-  appType: ['link', 'hosted'], // 'link' = external master link; 'hosted' = QRAMS serves the quiz
+  // 'link' = external master link · 'quiz' = built-in quiz (Quiz_Questions sheet,
+  // played on the QRAMS player page) · 'hosted' = teacher-pasted HTML served by GAS
+  appType: ['link', 'quiz', 'hosted'],
+  quizCorrect: ['A', 'B', 'C', 'D'],
 
   // ---- Phase 2 ----
   // Badge rules live as a short text string in the Badges sheet's `criteria`

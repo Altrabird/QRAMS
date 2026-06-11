@@ -43,6 +43,12 @@ function doGet(e) {
     return resultPage(submitResult(p.done, p.score, p.max));
   }
 
+  // A5) QUIZ PLAYER API (public JSON, keyed by the unguessable QR token):
+  //   ?play=<token>            → logs the scan, returns quiz questions or a redirect
+  //   ?finish=<token>&a=A,B,…  → grades the answers, records score + points
+  if (p.play)   { return jsonOk(playInfo(p.play, p.ua || '')); }
+  if (p.finish) { return jsonOk(finishQuiz(p.finish, p.a)); }
+
   // A4) HOSTED QUIZ: serve a teacher-pasted quiz with the score hook wired in.
   if (p.app) {
     return appPage(p.app, p.qid || '');
@@ -86,6 +92,7 @@ function routeGet(action, p) {
     case 'listCertificates': requireRole(p.token, CONFIG.ROLES); return listCertificates(p.scopeId);
     case 'getCertificate':   requireRole(p.token, CONFIG.ROLES); return getCertificate(p.certToken);
     case 'getTaskApp':       requireRole(p.token, CONFIG.ROLES); return getTaskApp(p.taskId);
+    case 'getQuiz':          requireRole(p.token, CONFIG.ROLES); return getQuiz(p.taskId);
 
     default:
       throw new Error('Unknown GET action: ' + action);
@@ -125,6 +132,7 @@ function routePost(action, b) {
     case 'duplicateTask':   requireRole(b.token, WRITERS); return duplicateTask(b.taskId);
     case 'saveTaskApp':     requireRole(b.token, WRITERS); return saveTaskApp(b.taskId, b.html);
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
+    case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
 
     // Students
     case 'importStudents':  requireRole(b.token, WRITERS); return importStudents(b.rows);

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>QRAMS Quiz</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+  <style>
+    /* ===========================================================================
+       QRAMS QUIZ PLAYER — the page a pupil lands on after scanning a QR code.
+       Standalone on purpose: no Bootstrap, no login, big tap targets, fast.
+       It talks to the backend with two public calls:  ?play=<token>  and
+       ?finish=<token>&a=A,B,…  (grading happens on the SERVER, so the correct
+       answers are never inside this page until the pupil has submitted).
+       =========================================================================== */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(160deg, #0e1d3c 0%, #123a6b 55%, #0e7490 100%);
+      padding: 16px; color: #0f172a;
+    }
+    .card {
+      width: 100%; max-width: 560px; background: #ffffff; border-radius: 24px;
+      padding: 26px 22px; box-shadow: 0 24px 60px rgba(2, 6, 23, .45);
+    }
+    .center { text-align: center; }
+    .muted { color: #64748b; font-size: .95rem; }
+    .spin {
+      width: 44px; height: 44px; border: 5px solid #e2e8f0; border-top-color: #0ea5e9;
+      border-radius: 50%; margin: 18px auto; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hello { font-size: 1.05rem; font-weight: 700; color: #0ea5e9; }
+    .title { font-size: 1.25rem; font-weight: 800; margin: 4px 0 2px; }
+
+    .bar { height: 12px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin: 16px 0 4px; }
+    .bar > div { height: 100%; width: 0%; border-radius: 99px;
+      background: linear-gradient(90deg, #0ea5e9, #6366f1); transition: width .35s ease; }
+    .step { font-size: .85rem; color: #64748b; text-align: right; margin-bottom: 10px; }
+
+    .q { font-size: 1.25rem; font-weight: 800; line-height: 1.45; margin: 10px 0 18px; }
+    .opt {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 16px;
+      padding: 14px 16px; margin-bottom: 12px; font-size: 1.05rem; font-weight: 600;
+      color: #0f172a; cursor: pointer; transition: all .15s ease;
+    }
+    .opt .tag {
+      flex: 0 0 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+      background: #e0f2fe; color: #0369a1; font-weight: 800;
+    }
+    .opt:active { transform: scale(.985); }
+    .opt.sel { border-color: #0ea5e9; background: #e0f2fe; }
+    .opt.sel .tag { background: #0ea5e9; color: #fff; }
+
+    .btn {
+      display: block; width: 100%; border: 0; border-radius: 16px; padding: 15px;
+      font-size: 1.1rem; font-weight: 800; cursor: pointer; margin-top: 6px;
+      background: linear-gradient(90deg, #0ea5e9, #6366f1); color: #fff;
+    }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    .big { font-size: 3.4rem; }
+    .score { font-size: 3rem; font-weight: 900; color: #0ea5e9; margin: 6px 0; }
+    .stars { font-size: 2.2rem; letter-spacing: .1em; margin: 4px 0 10px; }
+    .pts {
+      display: inline-block; background: #ecfdf5; color: #047857; border: 2px solid #6ee7b7;
+      border-radius: 99px; padding: 6px 18px; font-weight: 800; margin-bottom: 14px;
+    }
+    .note {
+      background: #fffbeb; border: 1px solid #fcd34d; color: #92400e;
+      border-radius: 12px; padding: 10px 14px; font-size: .9rem; margin: 12px 0;
+    }
+    .review { text-align: left; margin-top: 16px; border-top: 2px dashed #e2e8f0; padding-top: 12px; }
+    .review h3 { font-size: 1rem; margin-bottom: 8px; }
+    .rev { display: flex; gap: 10px; align-items: baseline; padding: 7px 4px; font-size: .95rem;
+      border-bottom: 1px solid #f1f5f9; }
+    .rev .ok { color: #16a34a; font-weight: 800; }
+    .rev .bad { color: #dc2626; font-weight: 800; }
+    .rev .fix { color: #16a34a; font-weight: 700; }
+    .foot { margin-top: 16px; font-size: .78rem; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="center">
+      <div class="big">📱</div>
+      <div class="title">Loading your task…</div>
+      <div class="spin"></div>
+      <div class="muted">Just a moment</div>
+    </div>
+  </div>
+
+  <!-- Shared connection config (gives us the backend /exec URL). -->
+  <script src="./js/config.js"></script>
+  <script>
+    /* ----------------------------- tiny helpers ----------------------------- */
+    const card = document.getElementById('card');
+    const esc = (s) => String(s == null ? '' : s)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    const API = QRAMS.getApiUrl();
+    const token = new URLSearchParams(location.search).get('t') || '';
+
+    const LETTERS = ['A', 'B', 'C', 'D'];
+    let quiz = null;        // the playInfo response
+    let current = 0;        // which question is showing
+    let picked = [];        // chosen letter per question
+
+    function fail(msg) {
+      card.innerHTML = `<div class="center"><div class="big">😕</div>
+        <div class="title">Oops</div>
+        <p class="muted" style="margin:8px 0 0">${esc(msg)}</p>
+        <p class="muted" style="margin-top:10px">Please tell your teacher.</p></div>`;
+    }
+
+    /* ------------------------------- 1. load ------------------------------- */
+    async function load() {
+      if (!token) return fail('No quiz code in this link.');
+      if (!API) return fail('The app is not connected yet.');
+      let r;
+      try {
+        const res = await fetch(API + '?play=' + encodeURIComponent(token) +
+          '&ua=' + encodeURIComponent(navigator.userAgent.slice(0, 200)));
+        r = await res.json();
+      } catch (e) { return fail('Could not reach the server. Check your internet and try again.'); }
+      if (!r.ok) return fail(r.error || 'Something went wrong.');
+      const d = r.data;
+
+      if (d.kind === 'redirect' && d.url) { location.replace(d.url); return; }
+      if (d.kind !== 'quiz') return fail(d.message || 'This code is not recognised.');
+
+      quiz = d;
+      picked = new Array(d.questions.length).fill('');
+      showQuestion();
+    }
+
+    /* --------------------------- 2. one question --------------------------- */
+    function showQuestion() {
+      const total = quiz.questions.length;
+      const q = quiz.questions[current];
+      const pct = Math.round((current / total) * 100);
+      const last = current === total - 1;
+
+      card.innerHTML = `
+        <div class="hello">Hi ${esc(quiz.name)} 👋</div>
+        <div class="title">${esc(quiz.taskTitle)}</div>
+        ${quiz.already ? `<div class="note">You already finished this task — this try is just for practice.</div>` : ''}
+        <div class="bar"><div style="width:${pct}%"></div></div>
+        <div class="step">Question ${current + 1} of ${total}</div>
+        <div class="q">${esc(q.question)}</div>
+        <div id="opts">${q.options.map((o, i) => `
+          <button class="opt${picked[current] === LETTERS[i] ? ' sel' : ''}" data-l="${LETTERS[i]}">
+            <span class="tag">${LETTERS[i]}</span><span>${esc(o)}</span>
+          </button>`).join('')}
+        </div>
+        <button class="btn" id="nextBtn" ${picked[current] ? '' : 'disabled'}>
+          ${last ? 'Finish ✅' : 'Next ➜'}</button>
+        <div class="foot">QRAMS · scan code ${esc(token)}</div>`;
+
+      document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+        picked[current] = b.dataset.l;
+        document.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', x === b));
+        document.getElementById('nextBtn').disabled = false;
+      });
+      document.getElementById('nextBtn').onclick = () => {
+        if (!picked[current]) return;
+        if (last) submit();
+        else { current++; showQuestion(); }
+      };
+    }
+
+    /* ------------------------------ 3. submit ------------------------------ */
+    async function submit() {
+      card.innerHTML = `<div class="center"><div class="big">🧮</div>
+        <div class="title">Checking your answers…</div><div class="spin"></div></div>`;
+      let r;
+      try {
+        const res = await fetch(API + '?finish=' + encodeURIComponent(token) +
+          '&a=' + encodeURIComponent(picked.join(',')));
+        r = await res.json();
+      } catch (e) { return fail('Could not send your answers. Check your internet and try again.'); }
+      if (!r.ok) return fail(r.error || 'Something went wrong.');
+      showResult(r.data);
+    }
+
+    /* ------------------------------ 4. result ------------------------------ */
+    function showResult(d) {
+      const pct = d.max ? d.score / d.max : 0;
+      const stars = pct >= 0.9 ? '⭐⭐⭐' : pct >= 0.6 ? '⭐⭐' : pct >= 0.3 ? '⭐' : '💪';
+      const cheer = pct >= 0.9 ? 'Amazing work!' : pct >= 0.6 ? 'Well done!' : pct >= 0.3 ? 'Good try!' : 'Keep practising!';
+      card.innerHTML = `
+        <div class="center">
+          <div class="big">${pct >= 0.6 ? '🎉' : '🌟'}</div>
+          <div class="title">${cheer}</div>
+          <div class="score">${d.score} / ${d.max}</div>
+          <div class="stars">${stars}</div>
+          ${d.already
+            ? `<div class="note">Practice round — your first score is the one that counts.</div>`
+            : `<div class="pts">+${d.points} points</div>`}
+          <div class="review">
+            <h3>Check your answers</h3>
+            ${d.review.map(v => `
+              <div class="rev">
+                <span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span>
+                <span>Q${v.qNo}: you chose <b>${esc(v.your || '—')}</b>${v.ok ? '' :
+                  ` · correct: <span class="fix">${esc(v.correct)}</span>`}</span>
+              </div>`).join('')}
+          </div>
+          <p class="muted" style="margin-top:14px">Your result is saved. You can close this page. 👍</p>
+        </div>`;
+    }
+
+    load();
+  </script>
+</body>
+</html>

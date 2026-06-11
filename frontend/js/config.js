@@ -11,6 +11,14 @@ const QRAMS = {
   // ===========================================================================
   DEFAULT_API_URL: 'https://script.google.com/macros/s/AKfycbzOmpiOP12bcjt43mBOLg8byafrWIJ9rNkvduwxSJIj3BmBmCZIEr3xgzEiv9pwLenR/exec',
 
+  // ===========================================================================
+  // QUIZ PLAYER ADDRESS — the public page pupils land on when they scan a QR.
+  // It lives with the frontend (GitHub Pages), so the link is short, clean and
+  // free of Google account/sandbox issues. Keep in sync with CONFIG.PLAYER_URL
+  // in backend/Config.gs.
+  // ===========================================================================
+  PLAYER_URL: 'https://altrabird.github.io/QRAMS/quiz.html',
+
   // Where we remember things on this device.
   KEYS: {
     API: 'qrams_api_url',
@@ -36,6 +44,7 @@ const QRAMS = {
   _cleanExec(u) { return String(u || '').trim().replace(/\/macros\/u\/\d+\/s\//, '/macros/s/'); },
   getApiUrl() { return this._cleanExec(localStorage.getItem(this.KEYS.API) || this.DEFAULT_API_URL); },
   setApiUrl(u) { localStorage.setItem(this.KEYS.API, this._cleanExec(u)); },
+  getPlayerUrl() { return this.PLAYER_URL || ''; },
 
   getToken() { return localStorage.getItem(this.KEYS.TOKEN) || ''; },
   getUser() { try { return JSON.parse(localStorage.getItem(this.KEYS.USER)); } catch (e) { return null; } },

@@ -70,6 +70,8 @@ const Api = {
   getTaskApp(taskId) { return this._get('getTaskApp', { taskId }); },
   saveTaskApp(taskId, html) { return this._post('saveTaskApp', { taskId, html }); },
   deleteTaskApp(taskId) { return this._post('deleteTaskApp', { taskId }); },
+  getQuiz(taskId) { return this._get('getQuiz', { taskId }); },
+  saveQuiz(taskId, questions) { return this._post('saveQuiz', { taskId, questions }); },
   saveCampaign(c) { return this._post('saveCampaign', c); },
   importStudents(rows) { return this._post('importStudents', { rows }); },
   saveGroup(group) { return this._post('saveGroup', group); },

@@ -278,14 +278,21 @@ async function taskModal(taskId) {
   const t = taskId ? (_tasksCache.find(x => x.taskId === taskId) || {}) : {};
   const campOpts = `<option value="">— none —</option>` +
     _campaignsCache.map(c => `<option value="${UI.esc(c.campaignId)}"${c.campaignId === t.campaignId ? ' selected' : ''}>${UI.esc(c.name)}</option>`).join('');
-  const appType = t.appType === 'hosted' ? 'hosted' : 'link';
+  const appType = ['quiz', 'hosted', 'link'].includes(t.appType) ? t.appType : (taskId ? 'link' : 'quiz');
 
-  // The ready-made prompt teachers paste into any AI to generate a compatible quiz.
-  const aiPrompt = 'Create ONE self-contained HTML file (HTML + CSS + JavaScript, no external libraries or CDNs) for a short quiz on [TOPIC] for [YEAR/LEVEL] pupils. Show one question at a time, then a final score screen. CRITICAL: when the quiz finishes, call the global function qramsDone(score, total) exactly once — for example qramsDone(8, 10). Do not add any login, submit button to a server, or anything else. Output only the HTML file.';
+  // Prompt for the ADVANCED hosted-HTML mode (paste into any AI).
+  const aiHtmlPrompt = 'Create ONE self-contained HTML file (HTML + CSS + JavaScript, no external libraries or CDNs) for a short quiz on [TOPIC] for [YEAR/LEVEL] pupils. Show one question at a time, then a final score screen. CRITICAL: when the quiz finishes, call the global function qramsDone(score, total) exactly once — for example qramsDone(8, 10). Do not add any login, submit button to a server, or anything else. Output only the HTML file.';
 
-  // Load existing hosted-quiz HTML when editing a hosted task.
+  // Load existing content when editing.
   let quizHtml = '';
+  _quizDraft = [emptyQuestion()];
   if (taskId && appType === 'hosted') { try { quizHtml = (await Api.getTaskApp(taskId)).html || ''; } catch (e) {} }
+  if (taskId && appType === 'quiz') {
+    try {
+      const qs = await Api.getQuiz(taskId);
+      if (qs.length) _quizDraft = qs.map(q => ({ q: q.question, options: [...q.options, '', '', ''].slice(0, 4), correct: q.correct || 'A' }));
+    } catch (e) {}
+  }
 
   UI.modal(`
     <div class="modal-header"><h5 class="modal-title">${taskId ? 'Edit' : 'New'} Task</h5>
@@ -298,9 +305,27 @@ async function taskModal(taskId) {
 
       <div class="col-12"><label class="form-label small fw-semibold">Task type</label>
         <select class="form-select" name="appType" id="taskAppType">
+          <option value="quiz"${appType === 'quiz' ? ' selected' : ''}>Built-in quiz — QRAMS makes &amp; marks it (recommended)</option>
           <option value="link"${appType === 'link' ? ' selected' : ''}>External link (Google Form, website, …)</option>
-          <option value="hosted"${appType === 'hosted' ? ' selected' : ''}>Hosted quiz — QRAMS hosts it &amp; collects the score</option>
+          <option value="hosted"${appType === 'hosted' ? ' selected' : ''}>Hosted HTML app (advanced — paste AI code)</option>
         </select></div>
+
+      <div class="col-12 d-none" id="builderArea">
+        <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+          <label class="form-label small fw-semibold mb-0">Questions</label>
+          <span class="badge text-bg-light" id="qbCount">0</span>
+          <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
+          <button type="button" class="btn btn-sm btn-primary" id="qbAddBtn"><i class="bi bi-plus-lg me-1"></i>Add question</button>
+        </div>
+        <div class="d-none border rounded p-2 mb-2" id="qbAiArea">
+          <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.</p>
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="qbCopyPrompt"><i class="bi bi-clipboard me-1"></i>Copy question prompt</button>
+          <textarea class="form-control form-control-sm font-monospace mb-2" id="qbAiText" rows="5" placeholder='[{"q":"…","options":["…","…","…","…"],"correct":1}]'></textarea>
+          <button type="button" class="btn btn-sm btn-success" id="qbParseBtn"><i class="bi bi-magic me-1"></i>Parse &amp; add</button>
+        </div>
+        <div id="qbList"></div>
+        <div class="form-text">Tick the circle beside the correct answer. Options C and D may be left empty.</div>
+      </div>
 
       <div class="col-12" id="linkArea">
         <label class="form-label small fw-semibold">Master link (URL)</label>
@@ -335,24 +360,25 @@ async function taskModal(taskId) {
     <div class="modal-footer"><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
       <button class="btn btn-primary" id="saveTaskBtn">Save Task</button></div>`);
 
-  // Toggle link vs hosted-quiz fields
+  // Show the right fields for the chosen task type.
   const typeSel = UI.el('taskAppType');
   const syncType = () => {
-    const hosted = typeSel.value === 'hosted';
-    UI.el('quizArea').classList.toggle('d-none', !hosted);
-    UI.el('linkArea').classList.toggle('d-none', hosted);
-    // Hosted quizzes should complete when the SCORE arrives, not on scan — avoid 'auto'.
+    const v = typeSel.value;
+    UI.el('builderArea').classList.toggle('d-none', v !== 'quiz');
+    UI.el('quizArea').classList.toggle('d-none', v !== 'hosted');
+    UI.el('linkArea').classList.toggle('d-none', v !== 'link');
+    // Quiz-style tasks complete when the SCORE arrives, not on scan — avoid 'auto'.
     const cm = UI.el('taskForm').elements['completionMode'];
-    if (hosted && cm && cm.value === 'auto') cm.value = 'quiz';
+    if ((v === 'quiz' || v === 'hosted') && cm && cm.value === 'auto') cm.value = 'quiz';
+    if (v === 'quiz') qbRender();
   };
   typeSel.onchange = syncType; syncType();
 
-  UI.el('copyPromptBtn').onclick = () => {
-    if (navigator.clipboard) navigator.clipboard.writeText(aiPrompt)
-      .then(() => UI.toast('Prompt copied — paste it into Gemini / ChatGPT / Claude.'))
-      .catch(() => UI.toast('Copy failed — select the text manually.', 'warning'));
-    else UI.toast('Clipboard not available here.', 'warning');
-  };
+  UI.el('copyPromptBtn').onclick = () => copyText(aiHtmlPrompt);
+  UI.el('qbCopyPrompt').onclick = () => copyText(QB_AI_PROMPT);
+  UI.el('qbAddBtn').onclick = () => { _quizDraft.push(emptyQuestion()); qbRender(); };
+  UI.el('qbAiBtn').onclick = () => UI.el('qbAiArea').classList.toggle('d-none');
+  UI.el('qbParseBtn').onclick = qbParseAI;
 
   UI.el('saveTaskBtn').onclick = async () => {
     const f = UI.el('taskForm');
@@ -360,16 +386,130 @@ async function taskModal(taskId) {
     const payload = Object.fromEntries(new FormData(f).entries());
     const html = (UI.el('quizHtml')?.value || '');
     if (taskId) payload.taskId = taskId;
-    if (payload.appType === 'hosted' && !html.trim()) return UI.toast('Paste the quiz HTML (or switch to External link).', 'warning');
-    if (payload.appType === 'link' && !(payload.masterLink || '').trim()) return UI.toast('Enter a master link (or switch to Hosted quiz).', 'warning');
+    let questions = [];
+    if (payload.appType === 'quiz') {
+      questions = qbCollect();
+      if (!questions.length) return UI.toast('Add at least one complete question (text + options A and B).', 'warning');
+    }
+    if (payload.appType === 'hosted' && !html.trim()) return UI.toast('Paste the quiz HTML (or switch task type).', 'warning');
+    if (payload.appType === 'link' && !(payload.masterLink || '').trim()) return UI.toast('Enter a master link (or switch task type).', 'warning');
     const btn = UI.el('saveTaskBtn'); btn.disabled = true;
     try {
       const saved = await Api.saveTask(payload);
       const id = (saved && saved.taskId) || taskId;
       if (payload.appType === 'hosted') await Api.saveTaskApp(id, html);
+      if (payload.appType === 'quiz') await Api.saveQuiz(id, questions);
       UI.closeModal(); UI.toast('Task saved.'); renderTasks();
     } catch (err) { UI.toast(err.message, 'danger'); btn.disabled = false; }
   };
+}
+
+/* ---------------- Built-in quiz builder (used inside taskModal) ----------------
+   _quizDraft holds the questions being edited: [{q, options:[A,B,C,D], correct:'A'}].
+   The small qb* functions below are global because the builder's inputs use
+   inline handlers (the modal is re-rendered HTML, not a framework component). */
+let _quizDraft = [];
+const QB_LETTERS = ['A', 'B', 'C', 'D'];
+const QB_AI_PROMPT = 'Write 5 multiple-choice questions for a quiz on [TOPIC] for [YEAR/LEVEL] pupils in [LANGUAGE]. Keep each question short and clear. Output ONLY a JSON array in exactly this format, with no other text: [{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] — "correct" is the position of the right option, counting from 1.';
+
+function emptyQuestion() { return { q: '', options: ['', '', '', ''], correct: 'A' }; }
+
+function copyText(text) {
+  if (navigator.clipboard) navigator.clipboard.writeText(text)
+    .then(() => UI.toast('Prompt copied — paste it into Gemini / ChatGPT / Claude.'))
+    .catch(() => UI.toast('Copy failed — select and copy manually.', 'warning'));
+  else UI.toast('Clipboard not available here.', 'warning');
+}
+
+/** Redraw the question cards from _quizDraft. */
+function qbRender() {
+  const list = UI.el('qbList');
+  if (!list) return;
+  UI.el('qbCount').textContent = _quizDraft.length;
+  list.innerHTML = _quizDraft.map((q, i) => `
+    <div class="border rounded p-2 mb-2">
+      <div class="d-flex gap-2 align-items-start mb-2">
+        <span class="badge text-bg-light mt-1">Q${i + 1}</span>
+        <textarea class="form-control form-control-sm" rows="2" placeholder="Question text"
+          oninput="qbSetQ(${i}, this.value)">${UI.esc(q.q)}</textarea>
+        <button type="button" class="btn btn-sm btn-outline-danger" title="Remove question" onclick="qbDel(${i})"><i class="bi bi-trash"></i></button>
+      </div>
+      ${QB_LETTERS.map((L, j) => `
+        <div class="input-group input-group-sm mb-1">
+          <label class="input-group-text" title="Mark as the correct answer">
+            <input type="radio" class="form-check-input mt-0 me-1" name="qbCorrect${i}"
+              ${q.correct === L ? 'checked' : ''} onchange="qbSetCorrect(${i}, '${L}')"> ${L}
+          </label>
+          <input class="form-control" value="${UI.esc(q.options[j])}"
+            placeholder="Option ${L}${j > 1 ? ' (optional)' : ''}" oninput="qbSetOpt(${i}, ${j}, this.value)">
+        </div>`).join('')}
+    </div>`).join('');
+}
+function qbSetQ(i, v) { _quizDraft[i].q = v; }
+function qbSetOpt(i, j, v) { _quizDraft[i].options[j] = v; }
+function qbSetCorrect(i, l) { _quizDraft[i].correct = l; }
+function qbDel(i) { _quizDraft.splice(i, 1); if (!_quizDraft.length) _quizDraft.push(emptyQuestion()); qbRender(); }
+
+/** Collect only complete questions for saving. */
+function qbCollect() {
+  return _quizDraft
+    .map(q => ({ q: q.q.trim(), options: q.options.map(o => o.trim()), correct: q.correct || 'A' }))
+    .filter(q => q.q && q.options[0] && q.options[1] && q.options[QB_LETTERS.indexOf(q.correct)]);
+}
+
+/** Parse an AI reply (JSON preferred, simple "Q:/A)" text as fallback). */
+function qbParseAI() {
+  const raw = (UI.el('qbAiText').value || '').trim();
+  if (!raw) return UI.toast('Paste the AI reply first.', 'warning');
+  let parsed = [];
+
+  // 1) JSON — find the [...] block even if wrapped in ``` fences or prose.
+  const jsonMatch = raw.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const arr = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(arr)) {
+        parsed = arr.map(x => {
+          const opts = (x.options || x.opts || []).map(o => String(o)).slice(0, 4);
+          let letter = 'A';
+          const c = x.correct;
+          if (typeof c === 'string' && /^[A-Da-d]$/.test(c.trim())) letter = c.trim().toUpperCase();
+          else {
+            const n = Number(c);
+            letter = QB_LETTERS[(n >= 1 && n <= opts.length) ? n - 1 : (n >= 0 && n < opts.length ? n : 0)] || 'A';
+          }
+          return { q: String(x.q || x.question || ''), options: [...opts, '', '', ''].slice(0, 4), correct: letter };
+        }).filter(x => x.q && x.options[0] && x.options[1]);
+      }
+    } catch (e) { /* fall through to text parsing */ }
+  }
+
+  // 2) Plain text — "Q: …" / "1. …" lines with "A) …" options; * marks the correct one.
+  if (!parsed.length) {
+    let cur = null;
+    raw.split(/\r?\n/).forEach(line => {
+      const l = line.trim();
+      if (!l) return;
+      const om = l.match(/^(\*?)\s*([A-Da-d])[).:-]\s*(.+)$/);
+      if (om && cur) {
+        const idx = QB_LETTERS.indexOf(om[2].toUpperCase());
+        cur.options[idx] = om[3].trim();
+        if (om[1] === '*') cur.correct = om[2].toUpperCase();
+      } else {
+        cur = { q: l.replace(/^(Q\d*|Soalan\s*\d*|\d+)[).:]?\s*/i, ''), options: ['', '', '', ''], correct: 'A' };
+        parsed.push(cur);
+      }
+    });
+    parsed = parsed.filter(x => x.q && x.options[0] && x.options[1]);
+  }
+
+  if (!parsed.length) return UI.toast('Could not read any questions — check the format.', 'warning');
+  const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
+  _quizDraft = blank ? parsed : _quizDraft.concat(parsed);
+  UI.el('qbAiText').value = '';
+  UI.el('qbAiArea').classList.add('d-none');
+  qbRender();
+  UI.toast(`Added ${parsed.length} question(s) — please double-check the correct answers!`);
 }
 async function duplicateTask(id) {
   try { await Api.duplicateTask(id); UI.toast('Task duplicated.'); renderTasks(); }
