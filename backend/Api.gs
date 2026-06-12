@@ -772,8 +772,14 @@ function quizFromNotes(fileBase64, mimeType, files, count) {
     'short, clear and age-appropriate for the level the notes suggest. ' +
     'Make them mostly straightforward recall, plus one or two that need real understanding. ' +
     'Each question must have exactly 4 options with ONE clearly correct answer. ' +
+    'IMPORTANT: your JSON array must contain EXACTLY ' + n + ' question objects — count them before answering. ' +
     AI_QUIZ_FORMAT;
   var qs = aiQuestions(list, prompt);
+  if (qs.length < n) {
+    // The model occasionally under-delivers on small counts; one quiet retry usually fixes it.
+    var again = aiQuestions(list, prompt);
+    if (again.length > qs.length) qs = again;
+  }
   if (!qs.length) throw new Error('The AI could not make questions from those notes — try a clearer photo.');
   return { questions: qs.slice(0, n), model: GEMINI_MODEL };
 }
