@@ -120,6 +120,10 @@ function routePost(action, b) {
   if (action === 'login') return login(b.email, b.pin);
   if (action === 'logout') return logout(b.token);
 
+  // PUBLIC: the quiz player submits answers (keyed by the QR token itself —
+  // pupils have no login). Structured answers don't fit in a GET URL.
+  if (action === 'finishQuiz') return finishQuiz(b.playToken, b.answers);
+
   // Everything else needs a session. Writers must be admin or teacher.
   var WRITERS = ['admin', 'teacher'];
 

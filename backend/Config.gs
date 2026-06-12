@@ -120,7 +120,10 @@ const SCHEMA = {
   // Built-in quizzes: ONE ROW PER QUESTION — teachers can even edit these
   // directly in the sheet. `correct` is the letter A/B/C/D. Leave optionC/D
   // blank for 2- or 3-option questions.
-  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct'],
+  // type: mcq | match | fill | order.  bloom: Revised Bloom's Taxonomy level.
+  // mcq uses optionA–D + correct; the other types keep their content as JSON in `data`
+  // (match: {"pairs":[["left","right"],…]} · fill: {"answers":[["ans","alt"],…]} · order: {"items":[…]}).
+  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct', 'type', 'bloom', 'data'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -134,6 +137,10 @@ const ENUMS = {
   // 'link' = external master link · 'quiz' = built-in quiz (Quiz_Questions sheet,
   // played on the QRAMS player page) · 'hosted' = teacher-pasted HTML served by GAS
   appType: ['link', 'quiz', 'hosted'],
+
+  // ---- Bloom phase: question/activity types + Revised Bloom's Taxonomy levels ----
+  quizType: ['mcq', 'match', 'fill', 'order'],
+  bloomLevel: ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'],
   quizCorrect: ['A', 'B', 'C', 'D'],
 
   // ---- Phase 2 ----

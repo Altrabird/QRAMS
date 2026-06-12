@@ -82,6 +82,30 @@
     .rev .bad { color: #dc2626; font-weight: 800; }
     .rev .fix { color: #16a34a; font-weight: 700; }
     .foot { margin-top: 16px; font-size: .78rem; color: #94a3b8; text-align: center; }
+
+    /* --- typed activities (Bloom phase) --- */
+    .bloom { display: inline-block; font-size: .72rem; font-weight: 800; padding: 3px 10px;
+      border-radius: 99px; margin-bottom: 6px; color: #fff; letter-spacing: .03em; }
+    .fillin { display: inline-block; width: 7.5em; margin: 0 4px; padding: 6px 10px;
+      border: 2px solid #94a3b8; border-radius: 10px; font: inherit; font-weight: 700; color: #0f172a; }
+    .fillin:focus { outline: none; border-color: #0ea5e9; background: #f0f9ff; }
+    .mwrap { display: flex; gap: 10px; }
+    .mcol { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .mitem { border: 2px solid #e2e8f0; background: #f8fafc; border-radius: 12px; padding: 10px 8px;
+      font-size: .95rem; font-weight: 600; cursor: pointer; text-align: center; color: #0f172a; }
+    .mitem.sel { border-color: #0ea5e9; background: #bae6fd; }
+    .mitem.p0 { border-color: #0ea5e9; background: #e0f2fe; }
+    .mitem.p1 { border-color: #a78bfa; background: #f3e8ff; }
+    .mitem.p2 { border-color: #34d399; background: #ecfdf5; }
+    .mitem.p3 { border-color: #fbbf24; background: #fffbeb; }
+    .oitem { display: flex; align-items: center; gap: 8px; border: 2px solid #e2e8f0; background: #f8fafc;
+      border-radius: 12px; padding: 8px 10px; margin-bottom: 8px; font-weight: 600; }
+    .oitem .num { flex: 0 0 26px; height: 26px; border-radius: 8px; background: #e0f2fe; color: #0369a1;
+      display: grid; place-items: center; font-weight: 800; font-size: .85rem; }
+    .oitem .txt { flex: 1; min-width: 0; }
+    .obtn { border: 0; background: #e2e8f0; border-radius: 8px; width: 36px; height: 32px;
+      font-weight: 800; cursor: pointer; color: #0f172a; font-size: 1rem; }
+    .obtn:disabled { opacity: .35; }
   </style>
 </head>
 <body>
@@ -134,16 +158,77 @@
       if (d.kind !== 'quiz') return fail(d.message || 'This code is not recognised.');
 
       quiz = d;
-      picked = new Array(d.questions.length).fill('');
+      // One answer slot per question, shaped by its activity type.
+      picked = d.questions.map(q => {
+        if (q.type === 'fill') return new Array(q.blanks || 1).fill('');
+        if (q.type === 'match') return new Array((q.left || []).length).fill('');
+        if (q.type === 'order') return (q.items || []).slice();
+        return ''; // mcq letter
+      });
       showQuestion();
     }
 
     /* --------------------------- 2. one question --------------------------- */
+    const BLOOM_COLORS = { Remember: '#0ea5e9', Understand: '#10b981', Apply: '#f59e0b',
+                           Analyze: '#fb923c', Evaluate: '#ec4899', Create: '#8b5cf6' };
+    let mSel = -1; // matching: which LEFT item is selected
+
+    /** Can the pupil move on? (every part of the answer filled in) */
+    function canGoNext(q, val) {
+      if (q.type === 'fill') return val.every(v => String(v).trim() !== '');
+      if (q.type === 'match') return val.every(v => v !== '');
+      if (q.type === 'order') return true;
+      return !!val;
+    }
+
+    /** The activity-specific part of the question card. */
+    function bodyHtml(q, i) {
+      const val = picked[i];
+      if (q.type === 'fill') {
+        // The question text contains ___ for each blank → swap them for inputs.
+        const parts = q.question.split('___');
+        let bi = 0, html = '<div class="q" style="line-height:2.3">';
+        parts.forEach((seg, k) => {
+          html += esc(seg);
+          if (k < parts.length - 1) { html += `<input class="fillin" data-b="${bi}" value="${esc(val[bi] || '')}" autocomplete="off">`; bi++; }
+        });
+        return html + '</div>';
+      }
+      if (q.type === 'match') {
+        return `<div class="q">${esc(q.question)}</div>
+          <p class="muted" style="margin-bottom:10px">Tap an item on the LEFT, then its partner on the RIGHT. Tap a left item twice to clear it.</p>
+          <div class="mwrap">
+            <div class="mcol">${q.left.map((t, li) => {
+              const cls = li === mSel ? ' sel' : (val[li] !== '' ? ' p' + (li % 4) : '');
+              return `<button class="mitem${cls}" data-side="l" data-i="${li}">${esc(t)}${val[li] ? `<div style="font-size:.74rem;font-weight:700;opacity:.75">⟶ ${esc(val[li])}</div>` : ''}</button>`;
+            }).join('')}</div>
+            <div class="mcol">${q.right.map(t => {
+              const li = val.indexOf(t);
+              return `<button class="mitem${li >= 0 ? ' p' + (li % 4) : ''}" data-side="r" data-t="${esc(t)}">${esc(t)}</button>`;
+            }).join('')}</div>
+          </div>`;
+      }
+      if (q.type === 'order') {
+        return `<div class="q">${esc(q.question)}</div>
+          <p class="muted" style="margin-bottom:10px">Use the arrows to put these in the correct order.</p>
+          ${val.map((t, k) => `<div class="oitem"><span class="num">${k + 1}</span><span class="txt">${esc(t)}</span>
+            <button class="obtn" data-mv="up" data-i="${k}" ${k === 0 ? 'disabled' : ''}>▲</button>
+            <button class="obtn" data-mv="dn" data-i="${k}" ${k === val.length - 1 ? 'disabled' : ''}>▼</button></div>`).join('')}`;
+      }
+      // mcq (default)
+      return `<div class="q">${esc(q.question)}</div>
+        <div id="opts">${(q.options || []).map((o, j) => `
+          <button class="opt${val === LETTERS[j] ? ' sel' : ''}" data-l="${LETTERS[j]}">
+            <span class="tag">${LETTERS[j]}</span><span>${esc(o)}</span>
+          </button>`).join('')}</div>`;
+    }
+
     function showQuestion() {
       const total = quiz.questions.length;
       const q = quiz.questions[current];
       const pct = Math.round((current / total) * 100);
       const last = current === total - 1;
+      const chip = q.bloom ? `<span class="bloom" style="background:${BLOOM_COLORS[q.bloom] || '#64748b'}">${esc(q.bloom)}</span>` : '';
 
       card.innerHTML = `
         <div class="hello">Hi ${esc(quiz.name)} 👋</div>
@@ -151,26 +236,60 @@
         ${quiz.already ? `<div class="note">You already finished this task — this try is just for practice.</div>` : ''}
         <div class="bar"><div style="width:${pct}%"></div></div>
         <div class="step">Question ${current + 1} of ${total}</div>
-        <div class="q">${esc(q.question)}</div>
-        <div id="opts">${q.options.map((o, i) => `
-          <button class="opt${picked[current] === LETTERS[i] ? ' sel' : ''}" data-l="${LETTERS[i]}">
-            <span class="tag">${LETTERS[i]}</span><span>${esc(o)}</span>
-          </button>`).join('')}
-        </div>
-        <button class="btn" id="nextBtn" ${picked[current] ? '' : 'disabled'}>
+        ${chip}
+        ${bodyHtml(q, current)}
+        <button class="btn" id="nextBtn" ${canGoNext(q, picked[current]) ? '' : 'disabled'}>
           ${last ? 'Finish ✅' : 'Next ➜'}</button>
         <div class="foot">QRAMS · scan code ${esc(token)}</div>`;
 
-      document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
-        picked[current] = b.dataset.l;
-        document.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', x === b));
-        document.getElementById('nextBtn').disabled = false;
-      });
+      wireQuestion(q);
       document.getElementById('nextBtn').onclick = () => {
-        if (!picked[current]) return;
+        if (!canGoNext(q, picked[current])) return;
+        mSel = -1;
         if (last) submit();
         else { current++; showQuestion(); }
       };
+    }
+
+    /** Hook up the interactions for the current question's activity type. */
+    function wireQuestion(q) {
+      const refresh = () => { document.getElementById('nextBtn').disabled = !canGoNext(q, picked[current]); };
+      if (q.type === 'fill') {
+        document.querySelectorAll('.fillin').forEach(inp => inp.oninput = () => {
+          picked[current][Number(inp.dataset.b)] = inp.value;
+          refresh();
+        });
+      } else if (q.type === 'match') {
+        document.querySelectorAll('.mitem').forEach(b => b.onclick = () => {
+          if (b.dataset.side === 'l') {
+            const li = Number(b.dataset.i);
+            if (mSel === li) { picked[current][li] = ''; mSel = -1; } // second tap clears the pair
+            else mSel = li;
+            showQuestion();
+          } else if (mSel >= 0) {
+            const t = b.dataset.t;
+            const used = picked[current].indexOf(t);     // a right item pairs with one left only
+            if (used >= 0) picked[current][used] = '';
+            picked[current][mSel] = t;
+            mSel = -1;
+            showQuestion();
+          }
+        });
+      } else if (q.type === 'order') {
+        document.querySelectorAll('.obtn').forEach(b => b.onclick = () => {
+          const i = Number(b.dataset.i), arr = picked[current];
+          const j = b.dataset.mv === 'up' ? i - 1 : i + 1;
+          if (j < 0 || j >= arr.length) return;
+          const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+          showQuestion();
+        });
+      } else { // mcq
+        document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+          picked[current] = b.dataset.l;
+          document.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', x === b));
+          refresh();
+        });
+      }
     }
 
     /* ------------------------------ 3. submit ------------------------------ */
@@ -178,10 +297,19 @@
       card.innerHTML = `<div class="center"><div class="big">🧮</div>
         <div class="title">Checking your answers…</div><div class="spin"></div></div>`;
       let r;
+      const allMcq = quiz.questions.every(q => !q.type || q.type === 'mcq');
       try {
-        const res = await fetch(API + '?finish=' + encodeURIComponent(token) +
-          '&a=' + encodeURIComponent(picked.join(',')));
+        // Structured answers (matching/fill/order) need a POST body.
+        const res = await fetch(API, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'finishQuiz', playToken: token, answers: picked }),
+        });
         r = await res.json();
+        // Older backend without the POST route → letters-in-URL fallback (MCQ-only).
+        if (!r.ok && /unknown post/i.test(r.error || '') && allMcq) {
+          const res2 = await fetch(API + '?finish=' + encodeURIComponent(token) + '&a=' + encodeURIComponent(picked.join(',')));
+          r = await res2.json();
+        }
       } catch (e) { return fail('Could not send your answers. Check your internet and try again.'); }
       if (!r.ok) return fail(r.error || 'Something went wrong.');
       showResult(r.data);

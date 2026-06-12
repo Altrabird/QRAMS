@@ -143,7 +143,10 @@ const SCHEMA = {
   // Built-in quizzes: ONE ROW PER QUESTION — teachers can even edit these
   // directly in the sheet. `correct` is the letter A/B/C/D. Leave optionC/D
   // blank for 2- or 3-option questions.
-  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct'],
+  // type: mcq | match | fill | order.  bloom: Revised Bloom's Taxonomy level.
+  // mcq uses optionA–D + correct; the other types keep their content as JSON in `data`
+  // (match: {"pairs":[["left","right"],…]} · fill: {"answers":[["ans","alt"],…]} · order: {"items":[…]}).
+  Quiz_Questions: ['taskId', 'qNo', 'question', 'optionA', 'optionB', 'optionC', 'optionD', 'correct', 'type', 'bloom', 'data'],
 };
 
 /** Valid status / progress values (used for validation + UI dropdowns). */
@@ -157,6 +160,10 @@ const ENUMS = {
   // 'link' = external master link · 'quiz' = built-in quiz (Quiz_Questions sheet,
   // played on the QRAMS player page) · 'hosted' = teacher-pasted HTML served by GAS
   appType: ['link', 'quiz', 'hosted'],
+
+  // ---- Bloom phase: question/activity types + Revised Bloom's Taxonomy levels ----
+  quizType: ['mcq', 'match', 'fill', 'order'],
+  bloomLevel: ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'],
   quizCorrect: ['A', 'B', 'C', 'D'],
 
   // ---- Phase 2 ----
@@ -1091,20 +1098,32 @@ function submitResult(token, score, max) {
    the frontend) calls the two PUBLIC endpoints below; the correct answers never
    leave the server until the pupil has submitted (no peeking in dev tools). */
 
-/** Teacher read (auth'd): full questions including the correct letters. */
+/** Teacher read (auth'd): full questions including the answers, typed + bloom-tagged. */
 function getQuiz(taskId) {
   var rows = findWhere(SHEETS.QUIZ_QUESTIONS, 'taskId', clean(taskId))
     .sort(function (a, b) { return Number(a.qNo) - Number(b.qNo); });
   return rows.map(function (r) {
-    return {
-      qNo: Number(r.qNo), question: String(r.question || ''),
-      options: [r.optionA, r.optionB, r.optionC, r.optionD].map(function (o) { return String(o == null ? '' : o); }),
-      correct: String(r.correct || 'A').toUpperCase(),
+    var type = ENUMS.quizType.indexOf(String(r.type)) !== -1 ? String(r.type) : 'mcq';
+    var out = {
+      qNo: Number(r.qNo), type: type,
+      bloom: ENUMS.bloomLevel.indexOf(String(r.bloom)) !== -1 ? String(r.bloom) : '',
+      question: String(r.question || ''),
     };
+    if (type === 'mcq') {
+      out.options = [r.optionA, r.optionB, r.optionC, r.optionD].map(function (o) { return String(o == null ? '' : o); });
+      out.correct = String(r.correct || 'A').toUpperCase();
+    } else {
+      var d = {};
+      try { d = JSON.parse(String(r.data || '{}')); } catch (e) {}
+      if (type === 'fill') out.answers = d.answers || [];
+      if (type === 'match') out.pairs = d.pairs || [];
+      if (type === 'order') out.items = d.items || [];
+    }
+    return out;
   });
 }
 
-/** Replace a task's whole question set (from the builder UI). */
+/** Replace a task's whole question set (from the builder UI). Validates per type. */
 function saveQuiz(taskId, questions) {
   taskId = clean(taskId);
   if (!taskId) throw new Error('taskId is required.');
@@ -1113,19 +1132,52 @@ function saveQuiz(taskId, questions) {
 
   var letters = ['A', 'B', 'C', 'D'];
   var rows = questions.map(function (q, i) {
+    var n = 'Question ' + (i + 1);
     // Accept both shapes: {q: …} (builder/AI import) and {question: …}.
     var text = clean(q.q !== undefined && q.q !== null && String(q.q) !== '' ? q.q : q.question);
-    var opts = (q.options || []).map(function (o) { return clean(o); });
-    var correct = String(q.correct || 'A').toUpperCase();
-    if (!text) throw new Error('Question ' + (i + 1) + ' has no text.');
-    if (!opts[0] || !opts[1]) throw new Error('Question ' + (i + 1) + ' needs at least options A and B.');
-    if (letters.indexOf(correct) === -1) throw new Error('Question ' + (i + 1) + ': correct must be A–D.');
-    if (!opts[letters.indexOf(correct)]) throw new Error('Question ' + (i + 1) + ': the correct option is empty.');
-    return {
-      taskId: taskId, qNo: i + 1, question: text,
-      optionA: opts[0] || '', optionB: opts[1] || '', optionC: opts[2] || '', optionD: opts[3] || '',
-      correct: correct,
+    if (!text) throw new Error(n + ' has no text.');
+    var type = ENUMS.quizType.indexOf(String(q.type)) !== -1 ? String(q.type) : 'mcq';
+    var bloom = ENUMS.bloomLevel.indexOf(String(q.bloom)) !== -1 ? String(q.bloom) : '';
+    var row = {
+      taskId: taskId, qNo: i + 1, question: text, type: type, bloom: bloom,
+      optionA: '', optionB: '', optionC: '', optionD: '', correct: '', data: '',
     };
+
+    if (type === 'mcq') {
+      var opts = (q.options || []).map(function (o) { return clean(o); });
+      var correct = String(q.correct || 'A').toUpperCase();
+      if (!opts[0] || !opts[1]) throw new Error(n + ' needs at least options A and B.');
+      if (letters.indexOf(correct) === -1) throw new Error(n + ': correct must be A–D.');
+      if (!opts[letters.indexOf(correct)]) throw new Error(n + ': the correct option is empty.');
+      row.optionA = opts[0] || ''; row.optionB = opts[1] || '';
+      row.optionC = opts[2] || ''; row.optionD = opts[3] || '';
+      row.correct = correct;
+
+    } else if (type === 'match') {
+      var pairs = (q.pairs || []).map(function (p) { return [clean(p && p[0]), clean(p && p[1])]; })
+        .filter(function (p) { return p[0] && p[1]; });
+      if (pairs.length < 2) throw new Error(n + ' (matching) needs at least 2 complete pairs.');
+      if (pairs.length > 4) pairs = pairs.slice(0, 4);
+      row.data = JSON.stringify({ pairs: pairs });
+
+    } else if (type === 'fill') {
+      var blanks = (String(text).match(/___/g) || []).length;
+      if (!blanks) throw new Error(n + ' (fill in the blanks) must contain ___ in the question for each blank.');
+      // answers: one entry per blank; each entry = array of accepted alternatives.
+      var answers = (q.answers || []).map(function (a) {
+        var alts = (Array.isArray(a) ? a : String(a).split(',')).map(function (s) { return clean(s); }).filter(String);
+        return alts;
+      }).filter(function (a) { return a.length; });
+      if (answers.length !== blanks) throw new Error(n + ': give an answer for each of the ' + blanks + ' blank(s).');
+      row.data = JSON.stringify({ answers: answers });
+
+    } else if (type === 'order') {
+      var items = (q.items || []).map(function (s) { return clean(s); }).filter(String);
+      if (items.length < 2) throw new Error(n + ' (arrange in order) needs at least 2 steps.');
+      if (items.length > 6) items = items.slice(0, 6);
+      row.data = JSON.stringify({ items: items });
+    }
+    return row;
   });
 
   deleteAllWhere(SHEETS.QUIZ_QUESTIONS, 'taskId', taskId);
@@ -1148,8 +1200,25 @@ function playInfo(token, userAgent) {
   var task = getTask(qr.taskId) || {};
 
   if (String(task.appType) === 'quiz') {
+    // Send each question WITHOUT its answers. Matching/order content is shuffled
+    // SERVER-side so the original (answer-revealing) order never reaches the phone.
     var qs = getQuiz(qr.taskId).map(function (q) {
-      return { qNo: q.qNo, question: q.question, options: q.options.filter(function (o) { return o !== ''; }) };
+      var pub = { qNo: q.qNo, type: q.type, bloom: q.bloom, question: q.question };
+      if (q.type === 'mcq') {
+        pub.options = q.options.filter(function (o) { return o !== ''; });
+      } else if (q.type === 'fill') {
+        pub.blanks = (q.answers || []).length || 1;
+      } else if (q.type === 'match') {
+        pub.left = (q.pairs || []).map(function (p) { return p[0]; });
+        pub.right = shuffled((q.pairs || []).map(function (p) { return p[1]; }));
+      } else if (q.type === 'order') {
+        pub.items = shuffled(q.items || []);
+        // don't accidentally show the correct order
+        if (pub.items.length > 1 && pub.items.join('') === (q.items || []).join('')) {
+          pub.items = shuffled(q.items);
+        }
+      }
+      return pub;
     });
     if (!qs.length) return { kind: 'unknown', message: 'This quiz has no questions yet.' };
     return {
@@ -1163,8 +1232,57 @@ function playInfo(token, userAgent) {
   return { kind: 'redirect', url: dest };
 }
 
+/** Fisher–Yates shuffle (copy) — used so the player never sees answer order. */
+function shuffled(arr) {
+  var a = (arr || []).slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+/** Compare answer text forgivingly: trim, lower-case, squash spaces. */
+function normTxt(s) {
+  return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Is this one answer fully correct? (Mastery mode: right or wrong, no partial.) */
+function gradeOne(q, ans) {
+  if (q.type === 'fill') {
+    var got = Array.isArray(ans) ? ans : [ans];
+    var keys = q.answers || [];
+    if (!keys.length) return false;
+    for (var i = 0; i < keys.length; i++) {
+      var accepted = (Array.isArray(keys[i]) ? keys[i] : [keys[i]]).map(normTxt);
+      if (accepted.indexOf(normTxt(got[i])) === -1) return false;
+    }
+    return true;
+  }
+  if (q.type === 'match') {
+    // ans = the right-side TEXT the pupil paired with each left item, in left order.
+    var g = Array.isArray(ans) ? ans : [];
+    var pairs = q.pairs || [];
+    for (var p = 0; p < pairs.length; p++) {
+      if (normTxt(g[p]) !== normTxt(pairs[p][1])) return false;
+    }
+    return pairs.length > 0;
+  }
+  if (q.type === 'order') {
+    // ans = the item TEXTS in the pupil's arrangement.
+    var o = Array.isArray(ans) ? ans : [];
+    var items = q.items || [];
+    if (o.length !== items.length || !items.length) return false;
+    for (var k = 0; k < items.length; k++) {
+      if (normTxt(o[k]) !== normTxt(items[k])) return false;
+    }
+    return true;
+  }
+  return String(ans || '').toUpperCase() === q.correct; // mcq
+}
+
 /**
- * PUBLIC: grade a finished quiz. `answersCsv` is e.g. "A,C,B,D,A".
+ * PUBLIC: grade a finished quiz. `answers` = letters CSV (legacy) or an array.
  *
  * MASTERY MODE: the pupil retries as many times as needed until EVERY answer
  * is correct. Failed tries are recorded (so the teacher sees how many were
@@ -1172,20 +1290,27 @@ function playInfo(token, userAgent) {
  * Full marks → the task completes with FULL points. After that, replays are
  * practice only (no extra points).
  */
-function finishQuiz(token, answersCsv) {
+function finishQuiz(token, answers) {
   token = clean(token);
   var qr = getQR(token);
   if (!qr) return { kind: 'unknown', message: 'This code is not recognised.' };
   var full = getQuiz(qr.taskId);
   if (!full.length) return { kind: 'unknown', message: 'This quiz has no questions.' };
 
-  var answers = String(answersCsv || '').toUpperCase().split(',');
+  // Legacy GET path sends letters as "A,C,B"; the player now POSTs a real array
+  // (per question: mcq = "B" · fill = ["ans",…] · match/order = [texts in order]).
+  if (typeof answers === 'string') answers = String(answers).toUpperCase().split(',');
+  if (!Array.isArray(answers)) answers = [];
+
   var review = [], score = 0;
   full.forEach(function (q, i) {
-    var your = clean(answers[i] || '');
-    var ok = your === q.correct;
+    var ok = gradeOne(q, answers[i]);
     if (ok) score++;
-    review.push({ qNo: q.qNo, your: your, correct: q.correct, ok: ok });
+    review.push({
+      qNo: q.qNo, ok: ok,
+      your: q.type === 'mcq' ? clean(answers[i]) : '',
+      correct: q.type === 'mcq' ? q.correct : (q.type === 'fill' ? (q.answers || []).map(function (a) { return a[0]; }).join(', ') : ''),
+    });
   });
 
   var alreadyDone = String(qr.progress) === 'Completed';
@@ -2357,6 +2482,10 @@ function routePost(action, b) {
   // Login is the only write that doesn't need an existing session.
   if (action === 'login') return login(b.email, b.pin);
   if (action === 'logout') return logout(b.token);
+
+  // PUBLIC: the quiz player submits answers (keyed by the QR token itself —
+  // pupils have no login). Structured answers don't fit in a GET URL.
+  if (action === 'finishQuiz') return finishQuiz(b.playToken, b.answers);
 
   // Everything else needs a session. Writers must be admin or teacher.
   var WRITERS = ['admin', 'teacher'];

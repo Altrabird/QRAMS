@@ -290,7 +290,13 @@ async function taskModal(taskId) {
   if (taskId && appType === 'quiz') {
     try {
       const qs = await Api.getQuiz(taskId);
-      if (qs.length) _quizDraft = qs.map(q => ({ q: q.question, options: [...q.options, '', '', ''].slice(0, 4), correct: q.correct || 'A' }));
+      if (qs.length) _quizDraft = qs.map(q => qbNormalise({
+        type: q.type, bloom: q.bloom, q: q.question,
+        options: q.options || [], correct: q.correct || 'A',
+        pairs: q.pairs || [],
+        blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
+        items: q.items || [],
+      }));
     } catch (e) {}
   }
 
@@ -343,7 +349,8 @@ async function taskModal(taskId) {
           <button type="button" class="btn btn-sm btn-success" id="qbParseBtn"><i class="bi bi-magic me-1"></i>Parse &amp; add</button>
         </div>
         <div id="qbList"></div>
-        <div class="form-text">Tick the circle beside the correct answer. Options C and D may be left empty.</div>
+        <div class="form-text">Each question can be a different activity (multiple choice, matching, fill blanks, arrange order)
+          and can carry a Bloom's Taxonomy level. For multiple choice, tick the circle beside the correct answer.</div>
       </div>
 
       <div class="col-12" id="linkArea">
@@ -435,14 +442,35 @@ async function taskModal(taskId) {
 }
 
 /* ---------------- Built-in quiz builder (used inside taskModal) ----------------
-   _quizDraft holds the questions being edited: [{q, options:[A,B,C,D], correct:'A'}].
+   _quizDraft holds the questions being edited. Every entry carries ALL type
+   fields so switching type never loses work:
+   { type, bloom, q, options:[A..D], correct:'A', pairs:[[l,r]…], blanks:['ans,alt'…], items:[…] }
    The small qb* functions below are global because the builder's inputs use
    inline handlers (the modal is re-rendered HTML, not a framework component). */
 let _quizDraft = [];
 const QB_LETTERS = ['A', 'B', 'C', 'D'];
+const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order' };
+const QB_BLOOMS = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
 const QB_AI_PROMPT = 'If a file (exam paper) is attached, extract its multiple-choice questions and work out the correct answers; otherwise write 5 multiple-choice questions on [TOPIC] for [YEAR/LEVEL] pupils in [LANGUAGE]. Keep each question short and clear. Output ONLY a JSON array in exactly this format, with no other text: [{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] — "correct" is the position of the right option, counting from 1.';
 
-function emptyQuestion() { return { q: '', options: ['', '', '', ''], correct: 'A' }; }
+function emptyQuestion(type) {
+  return {
+    type: QB_TYPES[type] ? type : 'mcq', bloom: '', q: '',
+    options: ['', '', '', ''], correct: 'A',
+    pairs: [['', ''], ['', '']], blanks: [''], items: ['', ''],
+  };
+}
+
+/* Older draft entries (AI imports, loaded quizzes) may miss the newer fields. */
+function qbNormalise(q) {
+  const e = emptyQuestion(q.type);
+  return Object.assign(e, q, {
+    options: [...(q.options || []), '', '', ''].slice(0, 4),
+    pairs: (q.pairs && q.pairs.length ? q.pairs : e.pairs).map(p => [p[0] || '', p[1] || '']),
+    blanks: (q.blanks && q.blanks.length ? q.blanks : e.blanks),
+    items: (q.items && q.items.length ? q.items : e.items),
+  });
+}
 
 function copyText(text) {
   if (navigator.clipboard) navigator.clipboard.writeText(text)
@@ -451,40 +479,123 @@ function copyText(text) {
   else UI.toast('Clipboard not available here.', 'warning');
 }
 
-/** Redraw the question cards from _quizDraft. */
+/** Redraw the question cards from _quizDraft (each card body matches its type). */
 function qbRender() {
   const list = UI.el('qbList');
   if (!list) return;
+  _quizDraft = _quizDraft.map(qbNormalise);
   UI.el('qbCount').textContent = _quizDraft.length;
   list.innerHTML = _quizDraft.map((q, i) => `
     <div class="border rounded p-2 mb-2">
-      <div class="d-flex gap-2 align-items-start mb-2">
-        <span class="badge text-bg-light mt-1">Q${i + 1}</span>
-        <textarea class="form-control form-control-sm" rows="2" placeholder="Question text"
-          oninput="qbSetQ(${i}, this.value)">${UI.esc(q.q)}</textarea>
-        <button type="button" class="btn btn-sm btn-outline-danger" title="Remove question" onclick="qbDel(${i})"><i class="bi bi-trash"></i></button>
+      <div class="d-flex gap-2 align-items-center mb-2 flex-wrap">
+        <span class="badge text-bg-light">Q${i + 1}</span>
+        <select class="form-select form-select-sm" style="width:auto" title="Activity type" onchange="qbSetType(${i}, this.value)">
+          ${Object.keys(QB_TYPES).map(t => `<option value="${t}"${q.type === t ? ' selected' : ''}>${QB_TYPES[t]}</option>`).join('')}
+        </select>
+        <select class="form-select form-select-sm" style="width:auto" title="Bloom's Taxonomy level (optional)" onchange="qbSetBloom(${i}, this.value)">
+          <option value="">— Bloom —</option>
+          ${QB_BLOOMS.map(b => `<option value="${b}"${q.bloom === b ? ' selected' : ''}>${b}</option>`).join('')}
+        </select>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-auto" title="Remove question" onclick="qbDel(${i})"><i class="bi bi-trash"></i></button>
       </div>
-      ${QB_LETTERS.map((L, j) => `
-        <div class="input-group input-group-sm mb-1">
-          <label class="input-group-text" title="Mark as the correct answer">
-            <input type="radio" class="form-check-input mt-0 me-1" name="qbCorrect${i}"
-              ${q.correct === L ? 'checked' : ''} onchange="qbSetCorrect(${i}, '${L}')"> ${L}
-          </label>
-          <input class="form-control" value="${UI.esc(q.options[j])}"
-            placeholder="Option ${L}${j > 1 ? ' (optional)' : ''}" oninput="qbSetOpt(${i}, ${j}, this.value)">
-        </div>`).join('')}
+      <textarea class="form-control form-control-sm mb-2" rows="2"
+        placeholder="${q.type === 'fill' ? 'Question text — type ___ (3 underscores) where each blank goes' : 'Question / instruction text'}"
+        oninput="qbSetQ(${i}, this.value)" ${q.type === 'fill' ? `onchange="qbSyncBlanks(${i})"` : ''}>${UI.esc(q.q)}</textarea>
+      ${qbBody(q, i)}
     </div>`).join('');
 }
+
+/** The type-specific part of one question card. */
+function qbBody(q, i) {
+  if (q.type === 'match') {
+    return q.pairs.map((p, j) => `
+      <div class="d-flex gap-1 mb-1 align-items-center">
+        <input class="form-control form-control-sm" value="${UI.esc(p[0])}" placeholder="Item" oninput="qbSetPair(${i},${j},0,this.value)">
+        <i class="bi bi-arrow-left-right text-secondary"></i>
+        <input class="form-control form-control-sm" value="${UI.esc(p[1])}" placeholder="Matches with…" oninput="qbSetPair(${i},${j},1,this.value)">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="qbDelPair(${i},${j})" ${q.pairs.length <= 2 ? 'disabled' : ''}><i class="bi bi-x"></i></button>
+      </div>`).join('') +
+      `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="qbAddPair(${i})" ${q.pairs.length >= 4 ? 'disabled' : ''}><i class="bi bi-plus"></i> Add pair</button>`;
+  }
+  if (q.type === 'fill') {
+    return q.blanks.map((b, j) => `
+      <div class="input-group input-group-sm mb-1">
+        <span class="input-group-text">Blank ${j + 1}</span>
+        <input class="form-control" value="${UI.esc(b)}" placeholder="answer (alternatives separated by commas)" oninput="qbSetBlank(${i},${j},this.value)">
+      </div>`).join('');
+  }
+  if (q.type === 'order') {
+    return `<div class="form-text mt-0 mb-1">Write the steps in the CORRECT order — pupils see them shuffled.</div>` +
+      q.items.map((it, j) => `
+      <div class="input-group input-group-sm mb-1">
+        <span class="input-group-text">${j + 1}</span>
+        <input class="form-control" value="${UI.esc(it)}" placeholder="Step ${j + 1}" oninput="qbSetItem(${i},${j},this.value)">
+        <button class="btn btn-outline-danger" type="button" onclick="qbDelItem(${i},${j})" ${q.items.length <= 2 ? 'disabled' : ''}><i class="bi bi-x"></i></button>
+      </div>`).join('') +
+      `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="qbAddItem(${i})" ${q.items.length >= 6 ? 'disabled' : ''}><i class="bi bi-plus"></i> Add step</button>`;
+  }
+  // mcq (default)
+  return QB_LETTERS.map((L, j) => `
+    <div class="input-group input-group-sm mb-1">
+      <label class="input-group-text" title="Mark as the correct answer">
+        <input type="radio" class="form-check-input mt-0 me-1" name="qbCorrect${i}"
+          ${q.correct === L ? 'checked' : ''} onchange="qbSetCorrect(${i}, '${L}')"> ${L}
+      </label>
+      <input class="form-control" value="${UI.esc(q.options[j])}"
+        placeholder="Option ${L}${j > 1 ? ' (optional)' : ''}" oninput="qbSetOpt(${i}, ${j}, this.value)">
+    </div>`).join('');
+}
+
 function qbSetQ(i, v) { _quizDraft[i].q = v; }
 function qbSetOpt(i, j, v) { _quizDraft[i].options[j] = v; }
 function qbSetCorrect(i, l) { _quizDraft[i].correct = l; }
+function qbSetType(i, t) { _quizDraft[i].type = QB_TYPES[t] ? t : 'mcq'; qbRender(); }
+function qbSetBloom(i, b) { _quizDraft[i].bloom = QB_BLOOMS.includes(b) ? b : ''; }
+function qbSetPair(i, j, side, v) { _quizDraft[i].pairs[j][side] = v; }
+function qbAddPair(i) { if (_quizDraft[i].pairs.length < 4) { _quizDraft[i].pairs.push(['', '']); qbRender(); } }
+function qbDelPair(i, j) { if (_quizDraft[i].pairs.length > 2) { _quizDraft[i].pairs.splice(j, 1); qbRender(); } }
+function qbSetItem(i, j, v) { _quizDraft[i].items[j] = v; }
+function qbAddItem(i) { if (_quizDraft[i].items.length < 6) { _quizDraft[i].items.push(''); qbRender(); } }
+function qbDelItem(i, j) { if (_quizDraft[i].items.length > 2) { _quizDraft[i].items.splice(j, 1); qbRender(); } }
+function qbSetBlank(i, j, v) { _quizDraft[i].blanks[j] = v; }
+/* Fill-blanks: when the teacher finishes editing the question, give it one
+   answer box per ___ found in the text. */
+function qbSyncBlanks(i) {
+  const q = _quizDraft[i];
+  const n = Math.max(1, (q.q.match(/___/g) || []).length);
+  if (n !== q.blanks.length) {
+    q.blanks = [...q.blanks, '', '', '', '', ''].slice(0, n);
+    qbRender();
+  }
+}
 function qbDel(i) { _quizDraft.splice(i, 1); if (!_quizDraft.length) _quizDraft.push(emptyQuestion()); qbRender(); }
 
-/** Collect only complete questions for saving. */
+/** Collect only complete questions for saving (validated again server-side). */
 function qbCollect() {
-  return _quizDraft
-    .map(q => ({ q: q.q.trim(), options: q.options.map(o => o.trim()), correct: q.correct || 'A' }))
-    .filter(q => q.q && q.options[0] && q.options[1] && q.options[QB_LETTERS.indexOf(q.correct)]);
+  const out = [];
+  _quizDraft.forEach(raw => {
+    const q = qbNormalise(raw);
+    const text = q.q.trim();
+    if (!text) return;
+    const base = { type: q.type, bloom: q.bloom, q: text };
+    if (q.type === 'match') {
+      const pairs = q.pairs.map(p => [p[0].trim(), p[1].trim()]).filter(p => p[0] && p[1]);
+      if (pairs.length >= 2) out.push({ ...base, pairs });
+    } else if (q.type === 'fill') {
+      const blanks = (text.match(/___/g) || []).length;
+      const answers = q.blanks.slice(0, blanks).map(b => b.split(',').map(s => s.trim()).filter(Boolean));
+      if (blanks >= 1 && answers.length === blanks && answers.every(a => a.length)) out.push({ ...base, answers });
+    } else if (q.type === 'order') {
+      const items = q.items.map(s => s.trim()).filter(Boolean);
+      if (items.length >= 2) out.push({ ...base, items });
+    } else {
+      const options = q.options.map(o => o.trim());
+      if (options[0] && options[1] && options[QB_LETTERS.indexOf(q.correct)]) {
+        out.push({ ...base, options, correct: q.correct || 'A' });
+      }
+    }
+  });
+  return out;
 }
 
 /** Parse an AI reply (JSON preferred, simple "Q:/A)" text as fallback). */
