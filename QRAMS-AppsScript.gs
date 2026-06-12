@@ -1264,17 +1264,15 @@ function hasGeminiKey() {
   return { set: !!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') };
 }
 
-/**
- * Read an exam paper and return builder-ready questions.
- * Accepts ONE base64 file (photo/PDF) — or, for multi-page papers, an array
- * `files` of {data, mime} (up to 6 photos read together as a single paper).
- * Throws clear, teacher-friendly errors.
- */
-function extractQuiz(fileBase64, mimeType, files) {
-  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  if (!key) throw new Error('No AI key set yet. An admin can add a free Gemini key in Settings (aistudio.google.com).');
+/* The JSON shape every AI quiz feature must reply with. */
+var AI_QUIZ_FORMAT =
+  'Output ONLY a JSON array, no other text, in exactly this format: ' +
+  '[{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] ' +
+  'where "correct" is the position of the right option counting from 1. ' +
+  'If you cannot make any questions, output [].';
 
-  // Normalise input to a list of pages.
+/** Normalise an upload into a list of {data, mime} pages (1 file, or up to 6 photos). */
+function aiFileList(fileBase64, mimeType, files) {
   var list = [];
   if (files && files.length) {
     for (var i = 0; i < Math.min(files.length, 6); i++) {
@@ -1289,17 +1287,13 @@ function extractQuiz(fileBase64, mimeType, files) {
       throw new Error('Please upload photos (JPG/PNG) or a PDF.');
     }
   }
+  return list;
+}
 
-  var prompt =
-    'You are reading a school exam paper (it may be in Malay or English). ' +
-    (list.length > 1 ? 'The paper spans ' + list.length + ' photos — read them in order as ONE paper. ' : '') +
-    'Extract EVERY multiple-choice question exactly as written, keeping the original language. ' +
-    'For each question, also determine the correct answer yourself. ' +
-    'Skip essay, fill-in-the-blank and matching questions. Maximum 50 questions. ' +
-    'Output ONLY a JSON array, no other text, in exactly this format: ' +
-    '[{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] ' +
-    'where "correct" is the position of the right option counting from 1. ' +
-    'If the paper has no multiple-choice questions, output [].';
+/** Send pages + a prompt to Gemini and parse builder-ready questions from the reply. */
+function aiQuestions(list, prompt) {
+  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key) throw new Error('No AI key set yet. An admin can add a free Gemini key in Settings (aistudio.google.com).');
 
   var parts = list.map(function (f) { return { inline_data: { mime_type: f.mime, data: f.data } }; });
   parts.push({ text: prompt });
@@ -1331,7 +1325,7 @@ function extractQuiz(fileBase64, mimeType, files) {
   catch (e) { throw new Error('Unexpected AI response — please try again.'); }
 
   var m = String(out).match(/\[[\s\S]*\]/);
-  if (!m) throw new Error('The AI could not find quiz questions in that file.');
+  if (!m) return [];
   var arr;
   try { arr = JSON.parse(m[0]); } catch (e) { throw new Error('The AI reply was not valid JSON — please try again.'); }
 
@@ -1346,8 +1340,47 @@ function extractQuiz(fileBase64, mimeType, files) {
     else { var n = Number(c); letter = letters[(n >= 1 && n <= opts.length) ? n - 1 : 0] || 'A'; }
     qs.push({ question: qText, options: opts, correct: letter });
   });
+  return qs;
+}
+
+/**
+ * EXAM PAPER → QUIZ: extract the questions that are already ON the paper.
+ * One photo/PDF, or up to 6 photos read together as a single paper.
+ */
+function extractQuiz(fileBase64, mimeType, files) {
+  var list = aiFileList(fileBase64, mimeType, files);
+  var prompt =
+    'You are reading a school exam paper (it may be in Malay or English). ' +
+    (list.length > 1 ? 'The paper spans ' + list.length + ' photos — read them in order as ONE paper. ' : '') +
+    'Extract EVERY multiple-choice question exactly as written, keeping the original language. ' +
+    'For each question, also determine the correct answer yourself. ' +
+    'Skip essay, fill-in-the-blank and matching questions. Maximum 50 questions. ' +
+    AI_QUIZ_FORMAT;
+  var qs = aiQuestions(list, prompt);
   if (!qs.length) throw new Error('No multiple-choice questions were found in that file.');
   return { questions: qs.slice(0, 50), model: GEMINI_MODEL };
+}
+
+/**
+ * NOTES → QUIZ: the teacher snaps/uploads STUDY NOTES (textbook page, slides,
+ * whiteboard, screenshot) and the AI WRITES brand-new questions from that
+ * content. `count` = how many questions the teacher wants (1–30).
+ */
+function quizFromNotes(fileBase64, mimeType, files, count) {
+  var n = Math.max(1, Math.min(30, Number(count) || 5));
+  var list = aiFileList(fileBase64, mimeType, files);
+  var prompt =
+    'You are reading STUDY NOTES for school pupils (they may be in Malay or English' +
+    (list.length > 1 ? '; they span ' + list.length + ' photos — read them as one set of notes' : '') + '). ' +
+    'CREATE exactly ' + n + ' NEW multiple-choice questions that test the content of these notes. ' +
+    'Every question must be answerable from the notes alone, written in the SAME language as the notes, ' +
+    'short, clear and age-appropriate for the level the notes suggest. ' +
+    'Make them mostly straightforward recall, plus one or two that need real understanding. ' +
+    'Each question must have exactly 4 options with ONE clearly correct answer. ' +
+    AI_QUIZ_FORMAT;
+  var qs = aiQuestions(list, prompt);
+  if (!qs.length) throw new Error('The AI could not make questions from those notes — try a clearer photo.');
+  return { questions: qs.slice(0, n), model: GEMINI_MODEL };
 }
 
 /* ========================= 7. DASHBOARD ========================= */
@@ -2334,6 +2367,7 @@ function routePost(action, b) {
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
     case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime, b.files);
+    case 'quizFromNotes':   requireRole(b.token, WRITERS); return quizFromNotes(b.file, b.mime, b.files, b.count);
     case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students

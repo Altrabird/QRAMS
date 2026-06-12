@@ -135,6 +135,7 @@ function routePost(action, b) {
     case 'deleteTaskApp':   requireRole(b.token, WRITERS); return deleteTaskApp(b.taskId);
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
     case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime, b.files);
+    case 'quizFromNotes':   requireRole(b.token, WRITERS); return quizFromNotes(b.file, b.mime, b.files, b.count);
     case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students

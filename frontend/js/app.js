@@ -318,10 +318,22 @@ async function taskModal(taskId) {
             <button type="button" class="btn btn-sm btn-success" id="qbSnapBtn" title="Take a photo of the exam paper"><i class="bi bi-camera me-1"></i>Snap paper</button>
             <button type="button" class="btn btn-sm btn-outline-success" id="qbUploadBtn" title="Upload photos or a PDF of the exam paper"><i class="bi bi-image me-1"></i>Upload</button>
           </div>
+          <button type="button" class="btn btn-sm btn-outline-info" id="qbNotesBtn" title="Snap or upload study notes — the AI writes new questions from them"><i class="bi bi-journal-text me-1"></i>From notes</button>
           <button type="button" class="btn btn-sm btn-outline-secondary" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
           <button type="button" class="btn btn-sm btn-primary" id="qbAddBtn"><i class="bi bi-plus-lg me-1"></i>Add question</button>
           <input type="file" id="qbFile" accept="image/*,application/pdf" multiple class="d-none">
           <input type="file" id="qbCam" accept="image/*" capture="environment" class="d-none">
+        </div>
+        <div id="qbNotesArea" class="border rounded p-2 mb-3 d-none">
+          <p class="small text-secondary mb-2"><i class="bi bi-journal-text me-1"></i><b>Notes → questions:</b>
+            snap or upload your NOTES (textbook page, slides, whiteboard, screenshot — up to 6 photos or a PDF)
+            and the AI will <b>write new questions</b> from them.</p>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <label class="small fw-semibold mb-0">How many questions:</label>
+            <input type="number" id="qbNotesCount" class="form-control form-control-sm" style="width:80px" min="1" max="30" value="5">
+            <button type="button" class="btn btn-sm btn-success" id="qbNotesSnapBtn"><i class="bi bi-camera me-1"></i>Snap notes</button>
+            <button type="button" class="btn btn-sm btn-outline-success" id="qbNotesUpBtn"><i class="bi bi-image me-1"></i>Upload notes</button>
+          </div>
         </div>
         <div class="d-none border rounded p-2 mb-2" id="qbAiArea">
           <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.
@@ -386,9 +398,15 @@ async function taskModal(taskId) {
   UI.el('qbAddBtn').onclick = () => { _quizDraft.push(emptyQuestion()); qbRender(); };
   UI.el('qbAiBtn').onclick = () => UI.el('qbAiArea').classList.toggle('d-none');
   UI.el('qbParseBtn').onclick = qbParseAI;
-  UI.el('qbSnapBtn').onclick = () => UI.el('qbCam').click();   // opens the phone camera directly
-  UI.el('qbUploadBtn').onclick = () => UI.el('qbFile').click(); // gallery / files (multi-select)
-  const onPickPaper = (e) => { if (e.target.files.length) qbUploadPaper([...e.target.files]); e.target.value = ''; };
+  // The same two hidden file inputs serve BOTH AI imports; _qbSource decides
+  // whether the picked file(s) go to exam-extraction or notes-generation.
+  let _qbSource = 'exam';
+  UI.el('qbSnapBtn').onclick = () => { _qbSource = 'exam'; UI.el('qbCam').click(); };   // camera
+  UI.el('qbUploadBtn').onclick = () => { _qbSource = 'exam'; UI.el('qbFile').click(); }; // gallery/files
+  UI.el('qbNotesBtn').onclick = () => UI.el('qbNotesArea').classList.toggle('d-none');
+  UI.el('qbNotesSnapBtn').onclick = () => { _qbSource = 'notes'; UI.el('qbCam').click(); };
+  UI.el('qbNotesUpBtn').onclick = () => { _qbSource = 'notes'; UI.el('qbFile').click(); };
+  const onPickPaper = (e) => { if (e.target.files.length) qbUploadPaper([...e.target.files], _qbSource); e.target.value = ''; };
   UI.el('qbFile').onchange = onPickPaper;
   UI.el('qbCam').onchange = onPickPaper;
 
@@ -554,13 +572,17 @@ function fileToBase64(file) {
   });
 }
 
-/** Send the exam paper (camera snap, photo(s) or a PDF) to the AI and drop the
-    questions into the builder. Multiple photos are read together as ONE paper. */
-async function qbUploadPaper(files) {
-  const snapBtn = UI.el('qbSnapBtn'), upBtn = UI.el('qbUploadBtn');
+/** Send photos/PDF to the AI and drop questions into the builder.
+    mode 'exam'  = extract the questions already ON an exam paper.
+    mode 'notes' = WRITE new questions from study notes (count from the panel). */
+async function qbUploadPaper(files, mode) {
+  mode = mode === 'notes' ? 'notes' : 'exam';
+  const btns = ['qbSnapBtn', 'qbUploadBtn', 'qbNotesSnapBtn', 'qbNotesUpBtn'].map(id => UI.el(id));
   const setBusy = (busy) => {
-    if (snapBtn) { snapBtn.disabled = busy; snapBtn.innerHTML = busy ? '<span class="spinner-border spinner-border-sm me-1"></span>Reading…' : '<i class="bi bi-camera me-1"></i>Snap paper'; }
-    if (upBtn) upBtn.disabled = busy;
+    btns.forEach(b => { if (b) b.disabled = busy; });
+    const spin = '<span class="spinner-border spinner-border-sm me-1"></span>';
+    if (btns[0]) btns[0].innerHTML = (busy && mode === 'exam') ? spin + 'Reading…' : '<i class="bi bi-camera me-1"></i>Snap paper';
+    if (btns[2]) btns[2].innerHTML = (busy && mode === 'notes') ? spin + 'Writing…' : '<i class="bi bi-camera me-1"></i>Snap notes';
   };
   try {
     files = [...files];
@@ -581,7 +603,13 @@ async function qbUploadPaper(files) {
     }
 
     setBusy(true);
-    const r = await Api.extractQuiz(payload);
+    let r;
+    if (mode === 'notes') {
+      payload.count = Math.max(1, Math.min(30, Number(UI.el('qbNotesCount')?.value) || 5));
+      r = await Api.quizFromNotes(payload);
+    } else {
+      r = await Api.extractQuiz(payload);
+    }
 
     const parsed = r.questions.map(q => ({
       q: q.question, options: [...q.options, '', '', ''].slice(0, 4), correct: q.correct || 'A',
@@ -589,7 +617,9 @@ async function qbUploadPaper(files) {
     const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
     _quizDraft = blank ? parsed : _quizDraft.concat(parsed);
     qbRender();
-    UI.toast(`Added ${parsed.length} question(s) — CHECK the ticked answers! Snap the next page to add more.`, 'warning');
+    UI.toast(mode === 'notes'
+      ? `Wrote ${parsed.length} question(s) from your notes — CHECK the ticked answers before saving!`
+      : `Added ${parsed.length} question(s) — CHECK the ticked answers! Snap the next page to add more.`, 'warning');
   } catch (err) {
     UI.toast(err.message, 'danger');
   } finally {
