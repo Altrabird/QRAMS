@@ -247,11 +247,13 @@ function drawDashboardCharts(d) {
    FIRST try (before any mastery retries) — overall, by class, by ability group.
    Low Analyze/Evaluate/Create = where higher-order thinking needs more time.  */
 const BLOOM_SHORT = { Remember: 'Rem', Understand: 'Und', Apply: 'App', Analyze: 'Ana', Evaluate: 'Eval', Create: 'Cre' };
+let _lastBloom = null; // last loaded report, so the PDF button can reuse it
 
 async function renderBloom() {
   UI.loading('Loading Bloom mastery…');
   try {
     const r = await Api.bloomReport();
+    _lastBloom = r;
     const levels = r.order;
     const o = r.overall;
     if (!o.samples) {
@@ -269,9 +271,12 @@ async function renderBloom() {
         </div></div>` : '';
 
     UI.view().innerHTML = `
-      <p class="text-secondary small mb-3"><i class="bi bi-info-circle me-1"></i>
-        % of pupils who answered each <strong>Revised Bloom's Taxonomy</strong> level correctly on their
-        <strong>first try</strong>, before any retries. Based on ${o.samples} quiz attempt${o.samples === 1 ? '' : 's'}.</p>
+      <div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+        <p class="text-secondary small mb-0"><i class="bi bi-info-circle me-1"></i>
+          % of pupils who answered each <strong>Revised Bloom's Taxonomy</strong> level correctly on their
+          <strong>first try</strong>, before any retries. Based on ${o.samples} quiz attempt${o.samples === 1 ? '' : 's'}.</p>
+        <button class="btn btn-sm btn-outline-primary flex-shrink-0" onclick="downloadBloomPdf()"><i class="bi bi-file-earmark-pdf me-1"></i>Download PDF</button>
+      </div>
       ${callout}
       <div class="card p-3 mb-3">
         <div class="section-head"><h2>Overall mastery by thinking level</h2></div>
@@ -324,6 +329,106 @@ function bloomTable(title, icon, levels, rows) {
       <tbody>${body}</tbody></table></div>
     <div class="form-text mt-2">% correct on first try · <span style="color:#ef4444">red &lt;50</span> · <span style="color:#f59e0b">amber 50–79</span> · <span style="color:#22c55e">green ≥80</span> · "—" = no question at that level.</div>
   </div>`;
+}
+
+/* ---- Printable PDF of the Bloom report (for PIBG / panitia meetings) ---- */
+function pctRgb(pct) {
+  if (pct === null || pct === undefined) return [203, 213, 225];
+  if (pct < 50) return [239, 68, 68];
+  if (pct < 80) return [245, 158, 11];
+  return [34, 197, 94];
+}
+
+async function downloadBloomPdf() {
+  if (!_lastBloom || !_lastBloom.overall.samples) { UI.toast('No Bloom data to export yet.', 'warning'); return; }
+  UI.toast('Building PDF…', 'info');
+  const rep = _lastBloom, levels = rep.order;
+  let lb = [];
+  try { lb = (await Api.dashboard()).leaderboard || []; } catch (e) {}
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  let y = 18;
+  const school = (UI.el('schoolBadge')?.textContent || 'QRAMS').trim();
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text(school, margin, y); y += 7;
+  doc.setFontSize(12); doc.text('Bloom Mastery Report', margin, y); y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110);
+  doc.text(`Generated ${new Date().toLocaleDateString()} · first-try mastery from ${rep.overall.samples} attempt(s)`, margin, y);
+  doc.setTextColor(0); y += 8;
+
+  if (rep.weakest) {
+    const c = pctRgb(rep.weakest.pct);
+    doc.setFillColor(c[0], c[1], c[2]); doc.roundedRect(margin, y - 4, pageW - margin * 2, 9, 1.5, 1.5, 'F');
+    doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text(`Focus area: ${rep.weakest.level} - ${rep.weakest.pct}% first-try mastery`, margin + 3, y + 2);
+    doc.setTextColor(0); y += 11;
+  }
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.text('Overall mastery by thinking level', margin, y); y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  const barX = margin + 32, barW = pageW - margin - barX - 26;
+  levels.forEach(l => {
+    const d = rep.overall.byLevel[l] || { pct: null, correct: 0, total: 0 };
+    doc.setTextColor(0); doc.text(l, margin, y + 3);
+    doc.setFillColor(238, 240, 243); doc.roundedRect(barX, y, barW, 4.5, 1, 1, 'F');
+    if (d.pct !== null) {
+      const c = pctRgb(d.pct); doc.setFillColor(c[0], c[1], c[2]);
+      doc.roundedRect(barX, y, Math.max(1, barW * d.pct / 100), 4.5, 1, 1, 'F');
+      doc.text(`${d.pct}% (${d.correct}/${d.total})`, barX + barW + 2, y + 3.5);
+    } else { doc.setTextColor(150); doc.text('-', barX + barW + 2, y + 3.5); }
+    y += 7;
+  });
+  y += 4;
+
+  y = bloomPdfTable(doc, 'By class', levels, rep.byClass, margin, y, pageW);
+  if (rep.byGroup.length) y = bloomPdfTable(doc, 'By ability group', levels, rep.byGroup, margin, y, pageW);
+
+  if (lb.length) {
+    if (y > 250) { doc.addPage(); y = 18; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(0); doc.text('Top pupils', margin, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    lb.slice(0, 10).forEach((row, i) => {
+      doc.text(`${i + 1}. ${row.label || ''}`.slice(0, 40), margin, y);
+      doc.text(`${row.className || ''}`, margin + 78, y);
+      doc.text(`${row.completed} done | ${row.points} pts`, pageW - margin, y, { align: 'right' });
+      y += 5.5;
+    });
+  }
+  doc.save(`Bloom_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+/* Heatmap table inside the PDF: rows = class/group, cols = Bloom levels. */
+function bloomPdfTable(doc, title, levels, rows, margin, y, pageW) {
+  if (!rows.length) return y;
+  if (y > 250) { doc.addPage(); y = 18; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(0); doc.text(title, margin, y); y += 5;
+  const nameW = 46, pupilsW = 16;
+  const colW = (pageW - margin * 2 - nameW - pupilsW) / levels.length;
+  doc.setFontSize(8);
+  doc.text('Name', margin, y + 3);
+  levels.forEach((l, i) => doc.text(BLOOM_SHORT[l] || l, margin + nameW + colW * i + colW / 2, y + 3, { align: 'center' }));
+  doc.text('Pupils', pageW - margin - pupilsW / 2, y + 3, { align: 'center' });
+  y += 5;
+  doc.setFont('helvetica', 'normal');
+  rows.forEach(row => {
+    if (y > 285) { doc.addPage(); y = 18; }
+    doc.setTextColor(0); doc.text(String(row.name).slice(0, 24), margin, y + 4);
+    levels.forEach((l, i) => {
+      const pct = (row.byLevel[l] || { pct: null }).pct;
+      const cx = margin + nameW + colW * i;
+      if (pct === null) { doc.setTextColor(150); doc.text('-', cx + colW / 2, y + 4, { align: 'center' }); }
+      else {
+        const c = pctRgb(pct); doc.setFillColor(c[0], c[1], c[2]); doc.rect(cx + 1, y, colW - 2, 6, 'F');
+        doc.setTextColor(255); doc.text(String(pct), cx + colW / 2, y + 4, { align: 'center' });
+      }
+    });
+    doc.setTextColor(0); doc.text(String(row.samples), pageW - margin - pupilsW / 2, y + 4, { align: 'center' });
+    y += 7;
+  });
+  return y + 4;
 }
 
 /* ========================= TASKS ========================= */
