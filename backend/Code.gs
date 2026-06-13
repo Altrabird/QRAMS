@@ -48,6 +48,7 @@ function doGet(e) {
   //   ?finish=<token>&a=A,B,…  → grades the answers, records score + points
   if (p.play)   { return jsonOk(playInfo(p.play, p.ua || '')); }
   if (p.finish) { return jsonOk(finishQuiz(p.finish, p.a)); }
+  if (p.prog)   { return jsonOk(myProgress(p.prog)); } // pupil's own points/badges
 
   // A4) HOSTED QUIZ: serve a teacher-pasted quiz with the score hook wired in.
   if (p.app) {

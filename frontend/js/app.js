@@ -487,6 +487,7 @@ async function taskModal(taskId) {
         blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
         items: q.items || [],
         model: q.model || '', keywords: (q.keywords || []).join(', '),
+        tfCorrect: q.correct || 'True', explain: !!q.explain, image: q.image || '', audio: q.audio || '',
       }));
     } catch (e) {}
   }
@@ -660,7 +661,7 @@ async function taskModal(taskId) {
    inline handlers (the modal is re-rendered HTML, not a framework component). */
 let _quizDraft = [];
 const QB_LETTERS = ['A', 'B', 'C', 'D'];
-const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order', open: 'Open answer' };
+const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order', open: 'Open answer', tf: 'True / False' };
 const QB_BLOOMS = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
 const QB_BLOOM_COLORS = { Remember: '#0ea5e9', Understand: '#10b981', Apply: '#f59e0b', Analyze: '#fb923c', Evaluate: '#ec4899', Create: '#8b5cf6' };
 const QB_PRESETS = {
@@ -677,6 +678,7 @@ function emptyQuestion(type) {
     options: ['', '', '', ''], correct: 'A',
     pairs: [['', ''], ['', '']], blanks: [''], items: ['', ''],
     model: '', keywords: '',
+    tfCorrect: 'True', explain: true, image: '', audio: '',
   };
 }
 
@@ -721,6 +723,10 @@ function qbRender() {
         placeholder="${q.type === 'fill' ? 'Question text — type ___ (3 underscores) where each blank goes' : 'Question / instruction text'}"
         oninput="qbSetQ(${i}, this.value)" ${q.type === 'fill' ? `onchange="qbSyncBlanks(${i})"` : ''}>${UI.esc(q.q)}</textarea>
       ${qbBody(q, i)}
+      <details class="mt-1"><summary class="small text-secondary" style="cursor:pointer">📎 Image / audio (optional)</summary>
+        <input class="form-control form-control-sm mt-1" value="${UI.esc(q.image || '')}" placeholder="Image URL (https://…)" oninput="qbSetImage(${i}, this.value)">
+        <input class="form-control form-control-sm mt-1" value="${UI.esc(q.audio || '')}" placeholder="Audio URL (https://… .mp3) — for listening tasks" oninput="qbSetAudio(${i}, this.value)">
+      </details>
     </div>`).join('');
 }
 
@@ -746,6 +752,17 @@ function qbBody(q, i) {
   if (q.type === 'open') {
     return `<textarea class="form-control form-control-sm mb-1" rows="2" placeholder="Model answer — what a good answer should say (the AI marks against this)" oninput="qbSetModel(${i}, this.value)">${UI.esc(q.model)}</textarea>
       <input class="form-control form-control-sm" value="${UI.esc(q.keywords)}" placeholder="Key words (optional, comma-separated) — used if the AI is unavailable" oninput="qbSetKw(${i}, this.value)">`;
+  }
+  if (q.type === 'tf') {
+    return `<div class="d-flex gap-2 align-items-center mb-1 flex-wrap">
+        <span class="input-group-text">Correct answer</span>
+        <select class="form-select form-select-sm" style="width:auto" onchange="qbSetTf(${i}, this.value)">
+          <option value="True"${q.tfCorrect !== 'False' ? ' selected' : ''}>True</option>
+          <option value="False"${q.tfCorrect === 'False' ? ' selected' : ''}>False</option>
+        </select>
+        <label class="small ms-2 mb-0"><input type="checkbox" class="form-check-input me-1" ${q.explain ? 'checked' : ''} onchange="qbSetExplain(${i}, this.checked)">Ask pupil to justify (why?)</label>
+      </div>
+      <div class="form-text mt-0">Pupil picks True or False${q.explain ? ' and writes a short reason (saved for you to read).' : '.'}</div>`;
   }
   if (q.type === 'order') {
     return `<div class="form-text mt-0 mb-1">Write the steps in the CORRECT order — pupils see them shuffled.</div>` +
@@ -783,6 +800,10 @@ function qbDelItem(i, j) { if (_quizDraft[i].items.length > 2) { _quizDraft[i].i
 function qbSetBlank(i, j, v) { _quizDraft[i].blanks[j] = v; }
 function qbSetModel(i, v) { _quizDraft[i].model = v; }
 function qbSetKw(i, v) { _quizDraft[i].keywords = v; }
+function qbSetTf(i, v) { _quizDraft[i].tfCorrect = v === 'False' ? 'False' : 'True'; }
+function qbSetExplain(i, v) { _quizDraft[i].explain = !!v; }
+function qbSetImage(i, v) { _quizDraft[i].image = v; }
+function qbSetAudio(i, v) { _quizDraft[i].audio = v; }
 /* Fill-blanks: when the teacher finishes editing the question, give it one
    answer box per ___ found in the text. */
 function qbSyncBlanks(i) {
@@ -802,7 +823,10 @@ function qbCollect() {
     const q = qbNormalise(raw);
     const text = q.q.trim();
     if (!text) return;
-    const base = { type: q.type, bloom: q.bloom, q: text };
+    const media = {};
+    const _img = (q.image || '').trim(); if (_img) media.image = _img;
+    const _aud = (q.audio || '').trim(); if (_aud) media.audio = _aud;
+    const base = { type: q.type, bloom: q.bloom, q: text, ...media };
     if (q.type === 'match') {
       const pairs = q.pairs.map(p => [p[0].trim(), p[1].trim()]).filter(p => p[0] && p[1]);
       if (pairs.length >= 2) out.push({ ...base, pairs });
@@ -816,6 +840,8 @@ function qbCollect() {
     } else if (q.type === 'open') {
       const model = (q.model || '').trim();
       if (model) out.push({ ...base, model, keywords: (q.keywords || '').split(',').map(s => s.trim()).filter(Boolean) });
+    } else if (q.type === 'tf') {
+      out.push({ ...base, correct: q.tfCorrect === 'False' ? 'False' : 'True', explain: !!q.explain });
     } else {
       const options = q.options.map(o => o.trim());
       if (options[0] && options[1] && options[QB_LETTERS.indexOf(q.correct)]) {
@@ -865,6 +891,7 @@ async function qbGenerate() {
       blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
       items: q.items || [],
       model: q.model || '', keywords: (q.keywords || []).join(', '),
+      tfCorrect: q.correct || 'True', explain: !!q.explain, image: q.image || '', audio: q.audio || '',
     }));
     if (!parsed.length) return UI.toast('No usable questions came back — try again.', 'warning');
     const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');

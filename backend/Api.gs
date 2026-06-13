@@ -497,17 +497,26 @@ function getQuiz(taskId) {
       bloom: ENUMS.bloomLevel.indexOf(String(r.bloom)) !== -1 ? String(r.bloom) : '',
       question: String(r.question || ''),
     };
+    // `data` holds typed payloads AND optional media (image/audio) for every type.
+    var d = {};
+    try { d = JSON.parse(String(r.data || '{}')); } catch (e) {}
     if (type === 'mcq') {
       out.options = [r.optionA, r.optionB, r.optionC, r.optionD].map(function (o) { return String(o == null ? '' : o); });
       out.correct = String(r.correct || 'A').toUpperCase();
-    } else {
-      var d = {};
-      try { d = JSON.parse(String(r.data || '{}')); } catch (e) {}
-      if (type === 'fill') out.answers = d.answers || [];
-      if (type === 'match') out.pairs = d.pairs || [];
-      if (type === 'order') out.items = d.items || [];
-      if (type === 'open') { out.model = d.model || ''; out.keywords = d.keywords || []; }
+    } else if (type === 'fill') {
+      out.answers = d.answers || [];
+    } else if (type === 'match') {
+      out.pairs = d.pairs || [];
+    } else if (type === 'order') {
+      out.items = d.items || [];
+    } else if (type === 'open') {
+      out.model = d.model || ''; out.keywords = d.keywords || [];
+    } else if (type === 'tf') {
+      out.correct = d.tf === 'False' ? 'False' : 'True'; // the answer (kept server-side)
+      out.explain = !!d.explain;                          // must the pupil justify?
     }
+    if (d.image) out.image = String(d.image);
+    if (d.audio) out.audio = String(d.audio);
     return out;
   });
 }
@@ -531,6 +540,7 @@ function saveQuiz(taskId, questions) {
       taskId: taskId, qNo: i + 1, question: text, type: type, bloom: bloom,
       optionA: '', optionB: '', optionC: '', optionD: '', correct: '', data: '',
     };
+    var dataObj = {}; // typed payload + optional media, serialized into the `data` column
 
     if (type === 'mcq') {
       var opts = (q.options || []).map(function (o) { return clean(o); });
@@ -547,7 +557,7 @@ function saveQuiz(taskId, questions) {
         .filter(function (p) { return p[0] && p[1]; });
       if (pairs.length < 2) throw new Error(n + ' (matching) needs at least 2 complete pairs.');
       if (pairs.length > 4) pairs = pairs.slice(0, 4);
-      row.data = JSON.stringify({ pairs: pairs });
+      dataObj = { pairs: pairs };
 
     } else if (type === 'fill') {
       var blanks = (String(text).match(/___/g) || []).length;
@@ -558,13 +568,13 @@ function saveQuiz(taskId, questions) {
         return alts;
       }).filter(function (a) { return a.length; });
       if (answers.length !== blanks) throw new Error(n + ': give an answer for each of the ' + blanks + ' blank(s).');
-      row.data = JSON.stringify({ answers: answers });
+      dataObj = { answers: answers };
 
     } else if (type === 'order') {
       var items = (q.items || []).map(function (s) { return clean(s); }).filter(String);
       if (items.length < 2) throw new Error(n + ' (arrange in order) needs at least 2 steps.');
       if (items.length > 6) items = items.slice(0, 6);
-      row.data = JSON.stringify({ items: items });
+      dataObj = { items: items };
 
     } else if (type === 'open') {
       var model = clean(q.model);
@@ -572,8 +582,21 @@ function saveQuiz(taskId, questions) {
       var kw = q.keywords || [];
       if (typeof kw === 'string') kw = kw.split(',');
       kw = kw.map(function (s) { return clean(s); }).filter(String).slice(0, 8);
-      row.data = JSON.stringify({ model: model, keywords: kw });
+      dataObj = { model: model, keywords: kw };
+
+    } else if (type === 'tf') {
+      // True/False (+ optional written justification). Graded on the pick; the
+      // justification is collected for the teacher, never AI-marked (keeps it simple).
+      var tfCorrect = /^(false|f|no|salah|0)$/i.test(String(q.correct).trim()) ? 'False' : 'True';
+      dataObj = { tf: tfCorrect, explain: !!q.explain };
     }
+
+    // Optional media (image / audio URL) on ANY question type.
+    var img = clean(q.image), aud = clean(q.audio);
+    if (img) dataObj.image = img.slice(0, 600);
+    if (aud) dataObj.audio = aud.slice(0, 600);
+    if (Object.keys(dataObj).length) row.data = JSON.stringify(dataObj);
+
     return row;
   });
 
@@ -614,7 +637,11 @@ function playInfo(token, userAgent) {
         if (pub.items.length > 1 && pub.items.join('') === (q.items || []).join('')) {
           pub.items = shuffled(q.items);
         }
+      } else if (q.type === 'tf') {
+        pub.explain = !!q.explain; // the True/False answer stays server-side
       }
+      if (q.image) pub.image = q.image; // media is safe to show (not an answer)
+      if (q.audio) pub.audio = q.audio;
       return pub;
     });
     if (!qs.length) return { kind: 'unknown', message: 'This quiz has no questions yet.' };
@@ -674,6 +701,11 @@ function gradeOne(q, ans) {
       if (normTxt(o[k]) !== normTxt(items[k])) return false;
     }
     return true;
+  }
+  if (q.type === 'tf') {
+    // ans = { pick: 'True'|'False', why: '…' }. Graded on the pick only.
+    var pick = ans && typeof ans === 'object' ? ans.pick : ans;
+    return normTxt(pick) === normTxt(q.correct);
   }
   return String(ans || '').toUpperCase() === q.correct; // mcq
 }
@@ -775,6 +807,10 @@ function finishQuiz(token, answers) {
       item.review = !!(openVerdict[i] && openVerdict[i].review);
       item.model = q.model; // shown to the pupil only on the mastered/practice review (stripped on retries)
     }
+    else if (q.type === 'tf') {
+      var tfa = (answers[i] && typeof answers[i] === 'object') ? answers[i] : {};
+      item.your = clean(tfa.pick); item.correct = q.correct;
+    }
     review.push(item);
   });
 
@@ -808,14 +844,19 @@ function finishQuiz(token, answers) {
   if (mastered) {
     // Mastery achieved → complete the task with FULL points.
     var saved = submitResult(token, full.length, full.length);
-    // Keep the pupil's OPEN answers so the teacher can read them (esp. review-flagged ones).
-    if (openIdx.length) {
-      var oa = openIdx.map(function (qi) {
-        return { qNo: full[qi].qNo, q: full[qi].question, your: clean(answers[qi]),
-                 review: !!(openVerdict[qi] && openVerdict[qi].review) };
-      });
-      updateWhere(SHEETS.QR_CODES, 'token', token, { openAnswers: JSON.stringify(oa).slice(0, 9000) });
-    }
+    // Keep free-text the teacher should read: open answers + True/False justifications.
+    var oa = [];
+    full.forEach(function (q, qi) {
+      if (q.type === 'open') {
+        oa.push({ qNo: q.qNo, q: q.question, your: clean(answers[qi]),
+                  review: !!(openVerdict[qi] && openVerdict[qi].review) });
+      } else if (q.type === 'tf' && q.explain) {
+        var tfa = (answers[qi] && typeof answers[qi] === 'object') ? answers[qi] : {};
+        var why = clean(tfa.why);
+        if (why) oa.push({ qNo: q.qNo, q: q.question, your: clean(tfa.pick) + ' — ' + why, review: false });
+      }
+    });
+    if (oa.length) updateWhere(SHEETS.QR_CODES, 'token', token, { openAnswers: JSON.stringify(oa).slice(0, 9000) });
     return { kind: 'result', mastered: true, already: false, score: score, max: full.length,
              attempts: failedTries + 1, review: review, points: (saved && saved.points) || 0 };
   }
@@ -830,6 +871,33 @@ function finishQuiz(token, answers) {
   var safeReview = review.map(function (v) { return { qNo: v.qNo, your: v.your, ok: v.ok }; });
   return { kind: 'result', mastered: false, already: false, score: score, max: full.length,
            attempts: failedTries + 1, review: safeReview, points: 0 };
+}
+
+/**
+ * PUBLIC: a pupil's own progress, by their play token (the per-QR secret they
+ * already hold — no login). Returns points, tasks completed, and badges earned,
+ * so the player can show a friendly "well done" panel after a quiz.
+ */
+function myProgress(token) {
+  token = clean(token);
+  var qr = getQR(token);
+  if (!qr) return { found: false };
+  var entityId = qr.entityId;
+
+  var points = 0, completed = 0;
+  findWhere(SHEETS.QR_CODES, 'entityId', entityId).forEach(function (q) {
+    points += Number(q.points) || 0;
+    if (String(q.progress) === 'Completed') completed++;
+  });
+
+  var meta = {};
+  readAll(SHEETS.BADGES).forEach(function (b) { meta[b.badgeId] = b; });
+  var badges = findWhere(SHEETS.STUDENT_BADGES, 'entityId', entityId).map(function (sb) {
+    var m = meta[sb.badgeId] || {};
+    return { name: String(m.name || sb.badgeId), icon: String(m.icon || '🏅') };
+  });
+
+  return { found: true, name: qr.label, points: points, completed: completed, badges: badges };
 }
 
 /* ---- Hosted quiz storage (the HTML that QRAMS serves itself) ---- */

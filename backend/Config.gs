@@ -139,7 +139,7 @@ const ENUMS = {
   appType: ['link', 'quiz', 'hosted'],
 
   // ---- Bloom phase: question/activity types + Revised Bloom's Taxonomy levels ----
-  quizType: ['mcq', 'match', 'fill', 'order', 'open'],
+  quizType: ['mcq', 'match', 'fill', 'order', 'open', 'tf'],
   bloomLevel: ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'],
   quizCorrect: ['A', 'B', 'C', 'D'],
 

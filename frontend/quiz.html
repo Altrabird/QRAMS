@@ -161,14 +161,19 @@
       if (d.kind !== 'quiz') return fail(d.message || 'This code is not recognised.');
 
       quiz = d;
-      // One answer slot per question, shaped by its activity type.
-      picked = d.questions.map(q => {
+      picked = freshPicked(); // one answer slot per question, shaped by its activity type
+      showQuestion();
+    }
+
+    /** Build a blank answer slot for each question, shaped to its activity type. */
+    function freshPicked() {
+      return quiz.questions.map(q => {
         if (q.type === 'fill') return new Array(q.blanks || 1).fill('');
         if (q.type === 'match') return new Array((q.left || []).length).fill('');
         if (q.type === 'order') return (q.items || []).slice();
-        return ''; // mcq letter
+        if (q.type === 'tf') return { pick: '', why: '' };
+        return ''; // mcq letter / open text
       });
-      showQuestion();
     }
 
     /* --------------------------- 2. one question --------------------------- */
@@ -182,7 +187,16 @@
       if (q.type === 'match') return val.every(v => v !== '');
       if (q.type === 'order') return true;
       if (q.type === 'open') return String(val).trim() !== '';
+      if (q.type === 'tf') return !!val.pick && (!q.explain || String(val.why || '').trim() !== '');
       return !!val;
+    }
+
+    /** Optional image/audio shown above any question. */
+    function mediaHtml(q) {
+      let h = '';
+      if (q.image) h += `<img src="${esc(q.image)}" alt="" style="max-width:100%;border-radius:14px;margin:0 0 12px;display:block">`;
+      if (q.audio) h += `<audio controls src="${esc(q.audio)}" style="width:100%;margin:0 0 12px"></audio>`;
+      return h;
     }
 
     /** The activity-specific part of the question card. */
@@ -224,6 +238,16 @@
           <textarea class="oanswer" placeholder="Write your answer here…">${esc(val || '')}</textarea>
           <p class="muted" style="margin-top:6px">Answer in your own words — spelling doesn't have to be perfect. 🙂</p>`;
       }
+      if (q.type === 'tf') {
+        const pick = (val && val.pick) || '';
+        return `<div class="q">${esc(q.question)}</div>
+          <div id="opts">
+            <button class="opt${pick === 'True' ? ' sel' : ''}" data-tf="True"><span class="tag">✓</span><span>True</span></button>
+            <button class="opt${pick === 'False' ? ' sel' : ''}" data-tf="False"><span class="tag">✗</span><span>False</span></button>
+          </div>
+          ${q.explain ? `<textarea class="oanswer" placeholder="Why? Explain your choice…">${esc((val && val.why) || '')}</textarea>
+          <p class="muted" style="margin-top:6px">Tell us why you chose that. ✍️</p>` : ''}`;
+      }
       // mcq (default)
       return `<div class="q">${esc(q.question)}</div>
         <div id="opts">${(q.options || []).map((o, j) => `
@@ -246,6 +270,7 @@
         <div class="bar"><div style="width:${pct}%"></div></div>
         <div class="step">Question ${current + 1} of ${total}</div>
         ${chip}
+        ${mediaHtml(q)}
         ${bodyHtml(q, current)}
         <button class="btn" id="nextBtn" ${canGoNext(q, picked[current]) ? '' : 'disabled'}>
           ${last ? 'Finish ✅' : 'Next ➜'}</button>
@@ -295,6 +320,14 @@
       } else if (q.type === 'open') {
         const ta = document.querySelector('.oanswer');
         if (ta) ta.oninput = () => { picked[current] = ta.value; refresh(); };
+      } else if (q.type === 'tf') {
+        document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+          picked[current].pick = b.dataset.tf;
+          document.querySelectorAll('.opt').forEach(x => x.classList.toggle('sel', x === b));
+          refresh();
+        });
+        const ta = document.querySelector('.oanswer');
+        if (ta) ta.oninput = () => { picked[current].why = ta.value; refresh(); };
       } else { // mcq
         document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
           picked[current] = b.dataset.l;
@@ -353,7 +386,7 @@
             <p class="muted" style="margin-top:10px">Attempt ${d.attempts} · you can try as many times as you need.</p>
           </div>`;
         document.getElementById('retryBtn').onclick = () => {
-          picked = new Array(quiz.questions.length).fill('');
+          picked = freshPicked();
           current = 0;
           showQuestion();
         };
@@ -387,8 +420,32 @@
               return `<div class="rev"><span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span><div>${detail}</div></div>`;
             }).join('')}
           </div>
+          <div id="progBox" style="margin-top:14px"></div>
           <p class="muted" style="margin-top:14px">${d.already ? 'You can close this page. 👍' : 'Your result is saved. You can close this page. 👍'}</p>
         </div>`;
+      loadProgress();
+    }
+
+    /** After finishing, show the pupil their points, tasks done, and badges. */
+    async function loadProgress() {
+      const box = document.getElementById('progBox');
+      if (!box) return;
+      try {
+        const res = await fetch(API + '?prog=' + encodeURIComponent(token));
+        const r = await res.json();
+        const d = r && r.data;
+        if (!r.ok || !d || !d.found) return;
+        const badges = (d.badges || []).map(b =>
+          `<span style="display:inline-block;background:#eef2ff;border:1px solid #c7d2fe;border-radius:99px;padding:4px 12px;margin:3px;font-weight:700;font-size:.85rem">${esc(b.icon)} ${esc(b.name)}</span>`).join('');
+        box.innerHTML = `<div style="border-top:2px dashed #e2e8f0;padding-top:12px">
+          <div style="font-weight:800;margin-bottom:8px">Your progress</div>
+          <div style="display:flex;gap:10px;justify-content:center;margin-bottom:8px">
+            <div style="background:#ecfeff;border:2px solid #a5f3fc;border-radius:14px;padding:8px 16px"><div style="font-size:1.4rem;font-weight:900;color:#0e7490">${d.points}</div><div class="muted" style="font-size:.78rem">points</div></div>
+            <div style="background:#f0fdf4;border:2px solid #bbf7d0;border-radius:14px;padding:8px 16px"><div style="font-size:1.4rem;font-weight:900;color:#15803d">${d.completed}</div><div class="muted" style="font-size:.78rem">tasks done</div></div>
+          </div>
+          ${badges ? `<div>${badges}</div>` : ''}
+        </div>`;
+      } catch (e) {}
     }
 
     load();
