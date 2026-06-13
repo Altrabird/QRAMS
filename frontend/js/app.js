@@ -148,6 +148,7 @@ const Router = {
     students: { title: 'Students', render: renderStudents },
     import: { title: 'Bulk Import', render: renderImport },
     analytics: { title: 'Analytics', render: renderAnalytics },
+    bloom: { title: 'Bloom Mastery', render: renderBloom },
     leaderboard: { title: 'Leaderboard', render: renderLeaderboard },
     rewards: { title: 'Rewards & Badges', render: renderRewards },
     settings: { title: 'Settings', render: renderSettings },
@@ -239,6 +240,90 @@ function drawDashboardCharts(d) {
   chart('classChart', { type: 'bar',
     data: { labels: d.classPerformance.map(c => c.className), datasets: [{ label: 'Completion %', data: d.classPerformance.map(c => c.rate), backgroundColor: '#6366f1', borderRadius: 6 }] },
     options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, max: 100, grid: { color: grid } }, x: { grid: { display: false } } } } });
+}
+
+/* ===================== BLOOM MASTERY (Phase D) =====================
+   Shows, per Revised Bloom's level, the % of pupils who got it right on their
+   FIRST try (before any mastery retries) — overall, by class, by ability group.
+   Low Analyze/Evaluate/Create = where higher-order thinking needs more time.  */
+const BLOOM_SHORT = { Remember: 'Rem', Understand: 'Und', Apply: 'App', Analyze: 'Ana', Evaluate: 'Eval', Create: 'Cre' };
+
+async function renderBloom() {
+  UI.loading('Loading Bloom mastery…');
+  try {
+    const r = await Api.bloomReport();
+    const levels = r.order;
+    const o = r.overall;
+    if (!o.samples) {
+      UI.view().innerHTML = UI.emptyState('bar-chart-steps', 'No Bloom data yet',
+        'When pupils take quizzes with Bloom-tagged questions, their first-try results appear here — broken down by thinking level.');
+      return;
+    }
+
+    const w = r.weakest;
+    const callout = w ? `<div class="card p-3 mb-3" style="border-left:5px solid ${bloomPctColor(w.pct)}">
+        <div class="d-flex align-items-start gap-2">
+          <i class="bi bi-lightbulb fs-4" style="color:${bloomPctColor(w.pct)}"></i>
+          <div><div class="fw-semibold">Focus area: <span style="color:${QB_BLOOM_COLORS[w.level] || '#333'}">${w.level}</span> — ${w.pct}% first-try mastery</div>
+            <div class="small text-secondary">This is the level pupils miss most on their first try. Try more ${w.level}-level questions (the AI generator can target it) or revisit it in class.</div></div>
+        </div></div>` : '';
+
+    UI.view().innerHTML = `
+      <p class="text-secondary small mb-3"><i class="bi bi-info-circle me-1"></i>
+        % of pupils who answered each <strong>Revised Bloom's Taxonomy</strong> level correctly on their
+        <strong>first try</strong>, before any retries. Based on ${o.samples} quiz attempt${o.samples === 1 ? '' : 's'}.</p>
+      ${callout}
+      <div class="card p-3 mb-3">
+        <div class="section-head"><h2>Overall mastery by thinking level</h2></div>
+        ${bloomBars(levels, o.byLevel)}
+      </div>
+      ${bloomTable('By class', 'people', levels, r.byClass)}
+      ${r.byGroup.length ? bloomTable('By ability group', 'diagram-3', levels, r.byGroup) : ''}`;
+  } catch (err) { UI.error(err.message); }
+}
+
+/* Score → traffic-light colour. */
+function bloomPctColor(pct) {
+  if (pct === null || pct === undefined) return '#cbd5e1';
+  if (pct < 50) return '#ef4444';
+  if (pct < 80) return '#f59e0b';
+  return '#22c55e';
+}
+
+/* Labelled horizontal bars for the overall view. */
+function bloomBars(levels, byLevel) {
+  return levels.map(l => {
+    const d = byLevel[l] || { pct: null, correct: 0, total: 0 };
+    const pct = d.pct;
+    const label = pct === null ? 'no questions yet' : `${pct}% (${d.correct}/${d.total})`;
+    return `<div class="mb-2">
+      <div class="d-flex justify-content-between small mb-1">
+        <span><span class="badge me-1" style="background:${QB_BLOOM_COLORS[l]}">&nbsp;</span>${l}</span>
+        <span class="text-secondary">${label}</span></div>
+      <div class="progress" style="height:10px"><div class="progress-bar" style="width:${pct || 0}%;background:${bloomPctColor(pct)}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+/* Heatmap table: one row per class/group, one column per Bloom level. */
+function bloomTable(title, icon, levels, rows) {
+  if (!rows.length) return '';
+  const head = levels.map(l => `<th class="text-center small" title="${l}" style="color:${QB_BLOOM_COLORS[l]}">${BLOOM_SHORT[l] || l}</th>`).join('');
+  const body = rows.map(row => `<tr>
+    <td class="fw-semibold">${UI.esc(row.name)}</td>
+    ${levels.map(l => {
+      const pct = (row.byLevel[l] || { pct: null }).pct;
+      return pct === null ? '<td class="text-center text-secondary">—</td>'
+        : `<td class="text-center fw-semibold" style="color:#fff;background:${bloomPctColor(pct)}">${pct}</td>`;
+    }).join('')}
+    <td class="text-center small text-secondary">${row.samples}</td></tr>`).join('');
+  return `<div class="card p-3 mb-3">
+    <div class="section-head"><h2><i class="bi bi-${icon} me-1"></i>${title}</h2></div>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Name</th>${head}<th class="text-center small">Pupils</th></tr></thead>
+      <tbody>${body}</tbody></table></div>
+    <div class="form-text mt-2">% correct on first try · <span style="color:#ef4444">red &lt;50</span> · <span style="color:#f59e0b">amber 50–79</span> · <span style="color:#22c55e">green ≥80</span> · "—" = no question at that level.</div>
+  </div>`;
 }
 
 /* ========================= TASKS ========================= */

@@ -72,6 +72,7 @@ function routeGet(action, p) {
 
     // Reads allowed for any signed-in role (admin/teacher/viewer).
     case 'dashboard':      requireRole(p.token, CONFIG.ROLES); return getDashboard();
+    case 'bloomReport':    requireRole(p.token, CONFIG.ROLES); return bloomReport();
     case 'listCampaigns':  requireRole(p.token, CONFIG.ROLES); return listCampaigns();
     case 'listTasks':      requireRole(p.token, CONFIG.ROLES); return listTasks();
     case 'getTask':        requireRole(p.token, CONFIG.ROLES); return getTask(p.taskId);

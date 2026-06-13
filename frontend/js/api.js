@@ -43,6 +43,7 @@ const Api = {
 
   // ---- Reads ----
   dashboard() { return this._get('dashboard'); },
+  bloomReport() { return this._get('bloomReport'); },
   listCampaigns() { return this._get('listCampaigns'); },
   listTasks() { return this._get('listTasks'); },
   getTask(taskId) { return this._get('getTask', { taskId }); },

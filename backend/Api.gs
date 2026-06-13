@@ -784,6 +784,21 @@ function finishQuiz(token, answers) {
     .filter(function (s) { return String(s.action) === 'attempt'; }).length;
   var mastered = score === full.length;
 
+  // Phase D: capture the FIRST-attempt result per Bloom level — the honest
+  // pre-practice mastery signal (retries later turn everything into 100%, so we
+  // only ever record this ONCE, on a pupil's very first submission of this code).
+  // Stored as {"Remember":[correct,total],"Analyze":[correct,total],…}.
+  if (!alreadyDone && failedTries === 0) {
+    var bloomFirst = {};
+    full.forEach(function (q, i) {
+      var lvl = q.bloom || 'Untagged';
+      bloomFirst[lvl] = bloomFirst[lvl] || [0, 0];
+      bloomFirst[lvl][1]++;            // questions at this level
+      if (marks[i]) bloomFirst[lvl][0]++; // got right first try
+    });
+    updateWhere(SHEETS.QR_CODES, 'token', token, { bloomFirst: JSON.stringify(bloomFirst) });
+  }
+
   // Practice after mastery (or a blocked code): show the full review, no points.
   if (alreadyDone || blocked) {
     return { kind: 'result', mastered: mastered, already: true, score: score, max: full.length,
@@ -1188,6 +1203,78 @@ function buildHourly(hourMap) {
   var out = [];
   for (var h = 0; h < 24; h++) out.push({ hour: h, count: hourMap[h] || 0 });
   return out;
+}
+
+/* ===================== BLOOM MASTERY ANALYTICS (Phase D) =====================
+   Turns the per-pupil first-attempt Bloom tallies (saved by finishQuiz) into a
+   report: for each Revised Bloom's level, what % of pupils got it right on their
+   FIRST try — overall, by class, and by ability group. Low Analyze/Evaluate/
+   Create % is the signal that higher-order thinking needs more class time.    */
+function bloomReport() {
+  var order = ENUMS.bloomLevel; // Remember … Create, in taxonomy order
+  var qrs = listQRCodes();
+
+  // Look up each pupil's ability group (QRs only carry className, not groupId).
+  var sGroup = {};
+  readAll(SHEETS.STUDENTS).forEach(function (s) { sGroup[s.studentId] = s.groupId || ''; });
+  var gName = {};
+  readAll(SHEETS.GROUPS).forEach(function (g) { gName[g.groupId] = g.name; });
+
+  function blank() { var o = {}; order.concat(['Untagged']).forEach(function (l) { o[l] = [0, 0]; }); return o; }
+  function add(acc, bf) {
+    Object.keys(bf).forEach(function (l) {
+      if (!acc[l]) acc[l] = [0, 0];
+      acc[l][0] += Number(bf[l][0]) || 0; acc[l][1] += Number(bf[l][1]) || 0;
+    });
+  }
+
+  var overall = blank(), classAcc = {}, groupAcc = {}, samples = 0;
+  qrs.forEach(function (q) {
+    if (!q.bloomFirst) return;
+    var bf; try { bf = JSON.parse(q.bloomFirst); } catch (e) { return; }
+    if (!bf || typeof bf !== 'object') return;
+    samples++;
+    add(overall, bf);
+
+    var cls = q.className || 'Unassigned';
+    classAcc[cls] = classAcc[cls] || { acc: blank(), n: 0 };
+    add(classAcc[cls].acc, bf); classAcc[cls].n++;
+
+    var gid = sGroup[q.entityId];
+    if (gid && gName[gid]) {
+      var gn = gName[gid];
+      groupAcc[gn] = groupAcc[gn] || { acc: blank(), n: 0 };
+      add(groupAcc[gn].acc, bf); groupAcc[gn].n++;
+    }
+  });
+
+  function pct(p) { return p[1] ? Math.round((p[0] / p[1]) * 100) : null; }
+  function shape(acc) {
+    var byLevel = {};
+    Object.keys(acc).forEach(function (l) { byLevel[l] = { correct: acc[l][0], total: acc[l][1], pct: pct(acc[l]) }; });
+    return byLevel;
+  }
+
+  // Weakest tagged level overall (lowest %, needs a few data points to be fair).
+  var weakest = null;
+  order.forEach(function (l) {
+    if (overall[l][1] < 3) return;
+    var pc = pct(overall[l]);
+    if (weakest === null || pc < weakest.pct) weakest = { level: l, pct: pc, total: overall[l][1] };
+  });
+
+  return {
+    order: order,
+    overall: { byLevel: shape(overall), samples: samples },
+    byClass: Object.keys(classAcc).sort().map(function (c) {
+      return { name: c, byLevel: shape(classAcc[c].acc), samples: classAcc[c].n };
+    }),
+    byGroup: Object.keys(groupAcc).sort().map(function (g) {
+      return { name: g, byLevel: shape(groupAcc[g].acc), samples: groupAcc[g].n };
+    }),
+    weakest: weakest,
+    generatedAt: nowIso(),
+  };
 }
 
 /* ========================= SETTINGS ========================= */

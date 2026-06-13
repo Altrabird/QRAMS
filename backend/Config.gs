@@ -82,7 +82,7 @@ const SCHEMA = {
   QR_Codes: [
     'token', 'taskId', 'entityType', 'entityId', 'label', 'className',
     'status', 'progress', 'firstScan', 'lastScan', 'scanCount',
-    'completedAt', 'points', 'score', 'maxScore', 'openAnswers', 'remarks', 'createdAt',
+    'completedAt', 'points', 'score', 'maxScore', 'openAnswers', 'bloomFirst', 'remarks', 'createdAt',
   ],
 
   Scan_Logs: [
