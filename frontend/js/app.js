@@ -296,6 +296,7 @@ async function taskModal(taskId) {
         pairs: q.pairs || [],
         blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
         items: q.items || [],
+        model: q.model || '', keywords: (q.keywords || []).join(', '),
       }));
     } catch (e) {}
   }
@@ -469,7 +470,7 @@ async function taskModal(taskId) {
    inline handlers (the modal is re-rendered HTML, not a framework component). */
 let _quizDraft = [];
 const QB_LETTERS = ['A', 'B', 'C', 'D'];
-const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order' };
+const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order', open: 'Open answer' };
 const QB_BLOOMS = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
 const QB_BLOOM_COLORS = { Remember: '#0ea5e9', Understand: '#10b981', Apply: '#f59e0b', Analyze: '#fb923c', Evaluate: '#ec4899', Create: '#8b5cf6' };
 const QB_PRESETS = {
@@ -485,6 +486,7 @@ function emptyQuestion(type) {
     type: QB_TYPES[type] ? type : 'mcq', bloom: '', q: '',
     options: ['', '', '', ''], correct: 'A',
     pairs: [['', ''], ['', '']], blanks: [''], items: ['', ''],
+    model: '', keywords: '',
   };
 }
 
@@ -551,6 +553,10 @@ function qbBody(q, i) {
         <input class="form-control" value="${UI.esc(b)}" placeholder="answer (alternatives separated by commas)" oninput="qbSetBlank(${i},${j},this.value)">
       </div>`).join('');
   }
+  if (q.type === 'open') {
+    return `<textarea class="form-control form-control-sm mb-1" rows="2" placeholder="Model answer — what a good answer should say (the AI marks against this)" oninput="qbSetModel(${i}, this.value)">${UI.esc(q.model)}</textarea>
+      <input class="form-control form-control-sm" value="${UI.esc(q.keywords)}" placeholder="Key words (optional, comma-separated) — used if the AI is unavailable" oninput="qbSetKw(${i}, this.value)">`;
+  }
   if (q.type === 'order') {
     return `<div class="form-text mt-0 mb-1">Write the steps in the CORRECT order — pupils see them shuffled.</div>` +
       q.items.map((it, j) => `
@@ -585,6 +591,8 @@ function qbSetItem(i, j, v) { _quizDraft[i].items[j] = v; }
 function qbAddItem(i) { if (_quizDraft[i].items.length < 6) { _quizDraft[i].items.push(''); qbRender(); } }
 function qbDelItem(i, j) { if (_quizDraft[i].items.length > 2) { _quizDraft[i].items.splice(j, 1); qbRender(); } }
 function qbSetBlank(i, j, v) { _quizDraft[i].blanks[j] = v; }
+function qbSetModel(i, v) { _quizDraft[i].model = v; }
+function qbSetKw(i, v) { _quizDraft[i].keywords = v; }
 /* Fill-blanks: when the teacher finishes editing the question, give it one
    answer box per ___ found in the text. */
 function qbSyncBlanks(i) {
@@ -615,6 +623,9 @@ function qbCollect() {
     } else if (q.type === 'order') {
       const items = q.items.map(s => s.trim()).filter(Boolean);
       if (items.length >= 2) out.push({ ...base, items });
+    } else if (q.type === 'open') {
+      const model = (q.model || '').trim();
+      if (model) out.push({ ...base, model, keywords: (q.keywords || '').split(',').map(s => s.trim()).filter(Boolean) });
     } else {
       const options = q.options.map(o => o.trim());
       if (options[0] && options[1] && options[QB_LETTERS.indexOf(q.correct)]) {
@@ -663,6 +674,7 @@ async function qbGenerate() {
       pairs: q.pairs || [],
       blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
       items: q.items || [],
+      model: q.model || '', keywords: (q.keywords || []).join(', '),
     }));
     if (!parsed.length) return UI.toast('No usable questions came back — try again.', 'warning');
     const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
@@ -1205,6 +1217,16 @@ async function renderQRDetail(token) {
             <button class="btn btn-sm btn-outline-info" onclick="issueCertModal(${UI.esc(JSON.stringify({ scope: 'task', scopeId: qr.taskId, entityId: qr.entityId, entityName: qr.label }))})"><i class="bi bi-patch-check me-1"></i>Certificate</button>
             <button class="btn btn-sm btn-outline-danger" onclick="delQR('${UI.esc(token)}','${UI.esc(qr.taskId)}')"><i class="bi bi-trash me-1"></i>Delete</button>
           </div>
+          ${(() => {
+            let oa = []; try { oa = JSON.parse(qr.openAnswers || '[]'); } catch (e) {}
+            if (!oa.length) return '';
+            return `<div class="section-head"><h2><i class="bi bi-pencil-square me-1"></i>Open answers</h2></div>
+              <div class="mb-3">${oa.map(a => `<div class="border rounded p-2 mb-2">
+                <div class="small text-secondary">Q${a.qNo}: ${UI.esc(a.q)}</div>
+                <div class="fw-semibold">${UI.esc(a.your)}</div>
+                ${a.review ? '<span class="badge text-bg-warning mt-1">📝 please review</span>' : '<span class="badge text-bg-success mt-1">✓ accepted by AI</span>'}
+              </div>`).join('')}</div>`;
+          })()}
           <div class="section-head"><h2>Scan history</h2></div>
           ${scans.length ? `<div class="table-responsive"><table class="table table-sm"><thead><tr><th>When</th><th>Device</th></tr></thead>
             <tbody>${scans.map(s => `<tr><td>${UI.dateTime(s.timestamp)}</td><td>${s.action === 'attempt'

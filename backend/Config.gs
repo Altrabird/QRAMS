@@ -82,7 +82,7 @@ const SCHEMA = {
   QR_Codes: [
     'token', 'taskId', 'entityType', 'entityId', 'label', 'className',
     'status', 'progress', 'firstScan', 'lastScan', 'scanCount',
-    'completedAt', 'points', 'score', 'maxScore', 'remarks', 'createdAt',
+    'completedAt', 'points', 'score', 'maxScore', 'openAnswers', 'remarks', 'createdAt',
   ],
 
   Scan_Logs: [
@@ -139,7 +139,7 @@ const ENUMS = {
   appType: ['link', 'quiz', 'hosted'],
 
   // ---- Bloom phase: question/activity types + Revised Bloom's Taxonomy levels ----
-  quizType: ['mcq', 'match', 'fill', 'order'],
+  quizType: ['mcq', 'match', 'fill', 'order', 'open'],
   bloomLevel: ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'],
   quizCorrect: ['A', 'B', 'C', 'D'],
 

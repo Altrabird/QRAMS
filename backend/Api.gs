@@ -506,6 +506,7 @@ function getQuiz(taskId) {
       if (type === 'fill') out.answers = d.answers || [];
       if (type === 'match') out.pairs = d.pairs || [];
       if (type === 'order') out.items = d.items || [];
+      if (type === 'open') { out.model = d.model || ''; out.keywords = d.keywords || []; }
     }
     return out;
   });
@@ -564,6 +565,14 @@ function saveQuiz(taskId, questions) {
       if (items.length < 2) throw new Error(n + ' (arrange in order) needs at least 2 steps.');
       if (items.length > 6) items = items.slice(0, 6);
       row.data = JSON.stringify({ items: items });
+
+    } else if (type === 'open') {
+      var model = clean(q.model);
+      if (!model) throw new Error(n + ' (open answer) needs a model answer for the AI to mark against.');
+      var kw = q.keywords || [];
+      if (typeof kw === 'string') kw = kw.split(',');
+      kw = kw.map(function (s) { return clean(s); }).filter(String).slice(0, 8);
+      row.data = JSON.stringify({ model: model, keywords: kw });
     }
     return row;
   });
@@ -670,6 +679,51 @@ function gradeOne(q, ans) {
 }
 
 /**
+ * AI-mark a batch of OPEN answers in ONE Gemini call (kept off the per-question
+ * loop so a quiz with several open questions still submits quickly).
+ * items: [{question, model, keywords, your}] → [{ok, review}].
+ * Lenient (accepts paraphrase/spelling, BM or English). Falls back to keyword
+ * matching — or "accept + flag for teacher" — when there is no key / the AI fails.
+ */
+function gradeOpenBatch(items) {
+  function fallback() {
+    return items.map(function (it) {
+      var ans = normTxt(it.your);
+      if (!ans) return { ok: false, review: false };
+      var kw = (it.keywords || []).map(normTxt).filter(String);
+      if (kw.length) {
+        var all = kw.every(function (k) { return ans.indexOf(k) !== -1; });
+        return { ok: all, review: !all }; // missing a key word → not yet; flag for the teacher
+      }
+      return { ok: true, review: true }; // no rubric + no AI → accept the effort, flag for review
+    });
+  }
+  if (!PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY')) return fallback();
+  try {
+    var lines = items.map(function (it, i) {
+      return (i + 1) + '. QUESTION: ' + it.question +
+        '\n   MODEL ANSWER: ' + (it.model || '(none)') +
+        (it.keywords && it.keywords.length ? '\n   KEY POINTS: ' + it.keywords.join(', ') : '') +
+        '\n   PUPIL ANSWER: ' + (it.your || '(blank)');
+    }).join('\n\n');
+    var prompt =
+      'You are a kind primary-school teacher marking short open answers. For EACH item, decide if the ' +
+      'pupil\'s answer captures the key idea of the model answer. Be lenient: accept paraphrasing, spelling ' +
+      'slips, and answers in Malay or English — mark correct if the MEANING is right. A blank or off-topic ' +
+      'answer is not correct. Return ONLY a JSON array, one object per item IN ORDER: ' +
+      '[{"ok":true,"review":false}] where ok = is it correct, review = true only if you are genuinely unsure.\n\n' + lines;
+    var arr = aiRawArray([], prompt, 0.1);
+    if (!arr || arr.length !== items.length) return fallback();
+    return items.map(function (it, i) {
+      var v = arr[i] || {};
+      return { ok: (v.ok === true || String(v.ok).toLowerCase() === 'true'), review: (v.review === true) };
+    });
+  } catch (e) {
+    return fallback();
+  }
+}
+
+/**
  * PUBLIC: grade a finished quiz. `answers` = letters CSV (legacy) or an array.
  *
  * MASTERY MODE: the pupil retries as many times as needed until EVERY answer
@@ -686,19 +740,42 @@ function finishQuiz(token, answers) {
   if (!full.length) return { kind: 'unknown', message: 'This quiz has no questions.' };
 
   // Legacy GET path sends letters as "A,C,B"; the player now POSTs a real array
-  // (per question: mcq = "B" · fill = ["ans",…] · match/order = [texts in order]).
+  // (per question: mcq = "B" · fill = ["ans",…] · match/order = [texts] · open = "free text").
   if (typeof answers === 'string') answers = String(answers).toUpperCase().split(',');
   if (!Array.isArray(answers)) answers = [];
 
+  // Grade everything that doesn't need AI first; collect OPEN questions for one batch call.
+  var openVerdict = {};
+  var openItems = [], openIdx = [];
+  var marks = full.map(function (q, i) {
+    if (q.type === 'open') {
+      openIdx.push(i);
+      openItems.push({ question: q.question, model: q.model, keywords: q.keywords, your: clean(answers[i]) });
+      return null; // graded below
+    }
+    return gradeOne(q, answers[i]);
+  });
+  if (openItems.length) {
+    var verdicts = gradeOpenBatch(openItems);
+    openIdx.forEach(function (qi, k) {
+      var v = verdicts[k] || { ok: false, review: false };
+      marks[qi] = !!v.ok; openVerdict[qi] = v;
+    });
+  }
+
   var review = [], score = 0;
   full.forEach(function (q, i) {
-    var ok = gradeOne(q, answers[i]);
+    var ok = marks[i];
     if (ok) score++;
-    review.push({
-      qNo: q.qNo, ok: ok,
-      your: q.type === 'mcq' ? clean(answers[i]) : '',
-      correct: q.type === 'mcq' ? q.correct : (q.type === 'fill' ? (q.answers || []).map(function (a) { return a[0]; }).join(', ') : ''),
-    });
+    var item = { qNo: q.qNo, ok: ok };
+    if (q.type === 'mcq') { item.your = clean(answers[i]); item.correct = q.correct; }
+    else if (q.type === 'fill') { item.correct = (q.answers || []).map(function (a) { return a[0]; }).join(', '); }
+    else if (q.type === 'open') {
+      item.your = clean(answers[i]);
+      item.review = !!(openVerdict[i] && openVerdict[i].review);
+      item.model = q.model; // shown to the pupil only on the mastered/practice review (stripped on retries)
+    }
+    review.push(item);
   });
 
   var alreadyDone = String(qr.progress) === 'Completed';
@@ -716,6 +793,14 @@ function finishQuiz(token, answers) {
   if (mastered) {
     // Mastery achieved → complete the task with FULL points.
     var saved = submitResult(token, full.length, full.length);
+    // Keep the pupil's OPEN answers so the teacher can read them (esp. review-flagged ones).
+    if (openIdx.length) {
+      var oa = openIdx.map(function (qi) {
+        return { qNo: full[qi].qNo, q: full[qi].question, your: clean(answers[qi]),
+                 review: !!(openVerdict[qi] && openVerdict[qi].review) };
+      });
+      updateWhere(SHEETS.QR_CODES, 'token', token, { openAnswers: JSON.stringify(oa).slice(0, 9000) });
+    }
     return { kind: 'result', mastered: true, already: false, score: score, max: full.length,
              attempts: failedTries + 1, review: review, points: (saved && saved.points) || 0 };
   }
@@ -885,6 +970,11 @@ function aiTypedQuestions(arr) {
       var items = (x.items || []).map(function (s) { return String(s).trim(); }).filter(String).slice(0, 6);
       if (items.length < 2) return;
       q.items = items;
+    } else if (type === 'open') {
+      var model = String(x.model || x.answer || '').trim();
+      if (!model) return;
+      q.model = model;
+      q.keywords = (x.keywords || []).map(function (s) { return String(s).trim(); }).filter(String).slice(0, 8);
     } else {
       var opts = (x.options || []).map(function (o) { return String(o).trim(); }).filter(String).slice(0, 4);
       if (opts.length < 2) return;
@@ -926,13 +1016,14 @@ function generateBloomQuiz(payload) {
     '',
     'Pick the activity TYPE that best fits each level:',
     'Remember -> "mcq" or "fill"; Understand -> "mcq" or "match"; Apply -> "fill" or "order";',
-    'Analyze -> "match" or "order" or "mcq"; Evaluate -> "mcq" (best-judgement); Create -> "order" or "mcq".',
+    'Analyze -> "match" or "order" or "mcq"; Evaluate -> "open" (justify a judgement) or "mcq"; Create -> "open" (design/plan/suggest) or "order".',
     '',
     'Use EXACTLY these JSON shapes; set "bloom" to the level and "type" to the activity:',
     'mcq:   {"type":"mcq","bloom":"Remember","q":"…","options":["…","…","…","…"],"correct":1}  (correct = position from 1)',
     'match: {"type":"match","bloom":"Understand","q":"instruction","pairs":[["item","its match"],["item","its match"]]}  (2-4 pairs)',
     'fill:  {"type":"fill","bloom":"Apply","q":"sentence with ___ for each blank","answers":[["answer","alt spelling"]]}  (one answers entry per ___)',
     'order: {"type":"order","bloom":"Analyze","q":"instruction","items":["first","second","third"]}  (items in the CORRECT order, 2-6)',
+    'open:  {"type":"open","bloom":"Evaluate","q":"question needing a short written answer","model":"a good sample answer","keywords":["key idea 1","key idea 2"]}',
     '',
     'Rules: short, clear, age-appropriate; ONE unambiguous correct answer each; for "fill" the q MUST contain ___ for every blank.',
     'Output ONLY a JSON array of the question objects, no other text.',

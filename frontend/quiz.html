@@ -106,6 +106,9 @@
     .obtn { border: 0; background: #e2e8f0; border-radius: 8px; width: 36px; height: 32px;
       font-weight: 800; cursor: pointer; color: #0f172a; font-size: 1rem; }
     .obtn:disabled { opacity: .35; }
+    .oanswer { width: 100%; border: 2px solid #cbd5e1; border-radius: 12px; padding: 12px;
+      font: inherit; resize: vertical; min-height: 100px; color: #0f172a; }
+    .oanswer:focus { outline: none; border-color: #0ea5e9; background: #f0f9ff; }
   </style>
 </head>
 <body>
@@ -178,6 +181,7 @@
       if (q.type === 'fill') return val.every(v => String(v).trim() !== '');
       if (q.type === 'match') return val.every(v => v !== '');
       if (q.type === 'order') return true;
+      if (q.type === 'open') return String(val).trim() !== '';
       return !!val;
     }
 
@@ -214,6 +218,11 @@
           ${val.map((t, k) => `<div class="oitem"><span class="num">${k + 1}</span><span class="txt">${esc(t)}</span>
             <button class="obtn" data-mv="up" data-i="${k}" ${k === 0 ? 'disabled' : ''}>▲</button>
             <button class="obtn" data-mv="dn" data-i="${k}" ${k === val.length - 1 ? 'disabled' : ''}>▼</button></div>`).join('')}`;
+      }
+      if (q.type === 'open') {
+        return `<div class="q">${esc(q.question)}</div>
+          <textarea class="oanswer" placeholder="Write your answer here…">${esc(val || '')}</textarea>
+          <p class="muted" style="margin-top:6px">Answer in your own words — spelling doesn't have to be perfect. 🙂</p>`;
       }
       // mcq (default)
       return `<div class="q">${esc(q.question)}</div>
@@ -283,6 +292,9 @@
           const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
           showQuestion();
         });
+      } else if (q.type === 'open') {
+        const ta = document.querySelector('.oanswer');
+        if (ta) ta.oninput = () => { picked[current] = ta.value; refresh(); };
       } else { // mcq
         document.querySelectorAll('.opt').forEach(b => b.onclick = () => {
           picked[current] = b.dataset.l;
@@ -362,12 +374,18 @@
                <p class="muted">${tries === 1 ? 'First try — superb! 🌟' : 'You did it in ' + tries + ' tries — well done for not giving up!'}</p>`}
           <div class="review">
             <h3>Your answers</h3>
-            ${d.review.map(v => `
-              <div class="rev">
-                <span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span>
-                <span>Q${v.qNo}: <b>${esc(v.your || '—')}</b>${v.ok || !v.correct ? '' :
-                  ` · correct: <span class="fix">${esc(v.correct)}</span>`}</span>
-              </div>`).join('')}
+            ${d.review.map(v => {
+              let detail;
+              if (v.model !== undefined) { // open answer
+                detail = `<span>Q${v.qNo}: <b>${esc(v.your || '—')}</b></span>`
+                  + (v.model ? `<div class="fix" style="font-size:.85rem">Sample answer: ${esc(v.model)}</div>` : '')
+                  + (v.review ? `<div style="font-size:.8rem;color:#92400e">📝 Saved for your teacher to look at.</div>` : '');
+              } else {
+                detail = `<span>Q${v.qNo}: <b>${esc(v.your || '—')}</b>${v.ok || !v.correct ? '' :
+                  ` · correct: <span class="fix">${esc(v.correct)}</span>`}</span>`;
+              }
+              return `<div class="rev"><span class="${v.ok ? 'ok' : 'bad'}">${v.ok ? '✓' : '✗'}</span><div>${detail}</div></div>`;
+            }).join('')}
           </div>
           <p class="muted" style="margin-top:14px">${d.already ? 'You can close this page. 👍' : 'Your result is saved. You can close this page. 👍'}</p>
         </div>`;
