@@ -75,6 +75,7 @@ const Api = {
   // payload: { file, mime } for one file, or { files: [{data, mime}, …] } for multi-page photos
   extractQuiz(payload) { return this._post('extractQuiz', payload); },
   quizFromNotes(payload) { return this._post('quizFromNotes', payload); }, // + payload.count = how many questions
+  generateBloomQuiz(payload) { return this._post('generateBloomQuiz', payload); }, // {topic, year, language, ladder}
   hasGeminiKey() { return this._get('hasGeminiKey'); },
   saveGeminiKey(key) { return this._post('saveGeminiKey', { key }); },
   saveCampaign(c) { return this._post('saveCampaign', c); },

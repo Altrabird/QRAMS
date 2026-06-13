@@ -1415,12 +1415,12 @@ function aiFileList(fileBase64, mimeType, files) {
   return list;
 }
 
-/** Send pages + a prompt to Gemini and parse builder-ready questions from the reply. */
-function aiQuestions(list, prompt) {
+/** Low-level: send pages + a prompt to Gemini; return the parsed JSON array (or []). */
+function aiRawArray(list, prompt, temp) {
   var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!key) throw new Error('No AI key set yet. An admin can add a free Gemini key in Settings (aistudio.google.com).');
 
-  var parts = list.map(function (f) { return { inline_data: { mime_type: f.mime, data: f.data } }; });
+  var parts = (list || []).map(function (f) { return { inline_data: { mime_type: f.mime, data: f.data } }; });
   parts.push({ text: prompt });
 
   var res = UrlFetchApp.fetch(
@@ -1432,7 +1432,7 @@ function aiQuestions(list, prompt) {
       muteHttpExceptions: true,
       payload: JSON.stringify({
         contents: [{ parts: parts }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+        generationConfig: { temperature: (temp == null ? 0.2 : temp), responseMimeType: 'application/json' },
       }),
     }
   );
@@ -1451,9 +1451,12 @@ function aiQuestions(list, prompt) {
 
   var m = String(out).match(/\[[\s\S]*\]/);
   if (!m) return [];
-  var arr;
-  try { arr = JSON.parse(m[0]); } catch (e) { throw new Error('The AI reply was not valid JSON — please try again.'); }
+  try { return JSON.parse(m[0]); } catch (e) { throw new Error('The AI reply was not valid JSON — please try again.'); }
+}
 
+/** Parse a Gemini array into MCQ builder questions (exam extraction + notes). */
+function aiQuestions(list, prompt) {
+  var arr = aiRawArray(list, prompt, 0.1);
   var letters = ['A', 'B', 'C', 'D'];
   var qs = [];
   (arr || []).forEach(function (x) {
@@ -1466,6 +1469,90 @@ function aiQuestions(list, prompt) {
     qs.push({ question: qText, options: opts, correct: letter });
   });
   return qs;
+}
+
+/** Parse a Gemini array into TYPED builder questions (mcq/match/fill/order + bloom). */
+function aiTypedQuestions(arr) {
+  var levels = ENUMS.bloomLevel, types = ENUMS.quizType, letters = ['A', 'B', 'C', 'D'];
+  var out = [];
+  (arr || []).forEach(function (x) {
+    var qText = String(x.q || x.question || '').trim();
+    if (!qText) return;
+    var type = types.indexOf(String(x.type)) !== -1 ? String(x.type) : 'mcq';
+    var bloom = levels.indexOf(String(x.bloom)) !== -1 ? String(x.bloom) : '';
+    var q = { type: type, bloom: bloom, question: qText };
+    if (type === 'match') {
+      var pairs = (x.pairs || []).map(function (p) { return [String((p && p[0]) || '').trim(), String((p && p[1]) || '').trim()]; })
+        .filter(function (p) { return p[0] && p[1]; }).slice(0, 4);
+      if (pairs.length < 2) return;
+      q.pairs = pairs;
+    } else if (type === 'fill') {
+      var answers = (x.answers || []).map(function (a) {
+        return (Array.isArray(a) ? a : String(a).split(',')).map(function (s) { return String(s).trim(); }).filter(String);
+      }).filter(function (a) { return a.length; });
+      var blanks = (qText.match(/___/g) || []).length;
+      if (!blanks || !answers.length || answers.length !== blanks) return; // skip malformed fills
+      q.answers = answers;
+    } else if (type === 'order') {
+      var items = (x.items || []).map(function (s) { return String(s).trim(); }).filter(String).slice(0, 6);
+      if (items.length < 2) return;
+      q.items = items;
+    } else {
+      var opts = (x.options || []).map(function (o) { return String(o).trim(); }).filter(String).slice(0, 4);
+      if (opts.length < 2) return;
+      var c = x.correct, letter = 'A';
+      if (typeof c === 'string' && /^[A-Da-d]$/.test(c.trim())) letter = c.trim().toUpperCase();
+      else { var n = Number(c); letter = letters[(n >= 1 && n <= opts.length) ? n - 1 : 0] || 'A'; }
+      q.options = opts; q.correct = letter;
+    }
+    out.push(q);
+  });
+  return out;
+}
+
+/**
+ * BLOOM GENERATOR (Phase B): write a fresh TYPED quiz for a topic across the
+ * Revised Bloom's Taxonomy levels. `ladder` = { Remember: n, Understand: n, … }.
+ * Differentiation made easy: same topic, different ladder per ability group.
+ */
+function generateBloomQuiz(payload) {
+  var topic = clean(payload.topic);
+  if (!topic) throw new Error('Enter a topic first.');
+  var year = clean(payload.year);
+  var language = clean(payload.language) || 'the same language as the topic';
+  var ladder = payload.ladder || {};
+
+  var lines = [], total = 0;
+  ENUMS.bloomLevel.forEach(function (lv) {
+    var n = Math.max(0, Math.min(15, Number(ladder[lv]) || 0));
+    if (n > 0) { lines.push(n + ' "' + lv + '"'); total += n; }
+  });
+  if (!total) throw new Error('Choose at least one question.');
+  if (total > 30) throw new Error('Keep the total to 30 questions or fewer.');
+
+  var prompt = [
+    'You are an expert teacher writing a quiz aligned to the Revised Bloom\'s Taxonomy.',
+    'Topic: "' + topic + '".' + (year ? ' Suitable for: ' + year + '.' : ''),
+    'Write EVERY question and answer in ' + language + '.',
+    'Create EXACTLY this many questions at each Bloom level: ' + lines.join(', ') + '.',
+    '',
+    'Pick the activity TYPE that best fits each level:',
+    'Remember -> "mcq" or "fill"; Understand -> "mcq" or "match"; Apply -> "fill" or "order";',
+    'Analyze -> "match" or "order" or "mcq"; Evaluate -> "mcq" (best-judgement); Create -> "order" or "mcq".',
+    '',
+    'Use EXACTLY these JSON shapes; set "bloom" to the level and "type" to the activity:',
+    'mcq:   {"type":"mcq","bloom":"Remember","q":"…","options":["…","…","…","…"],"correct":1}  (correct = position from 1)',
+    'match: {"type":"match","bloom":"Understand","q":"instruction","pairs":[["item","its match"],["item","its match"]]}  (2-4 pairs)',
+    'fill:  {"type":"fill","bloom":"Apply","q":"sentence with ___ for each blank","answers":[["answer","alt spelling"]]}  (one answers entry per ___)',
+    'order: {"type":"order","bloom":"Analyze","q":"instruction","items":["first","second","third"]}  (items in the CORRECT order, 2-6)',
+    '',
+    'Rules: short, clear, age-appropriate; ONE unambiguous correct answer each; for "fill" the q MUST contain ___ for every blank.',
+    'Output ONLY a JSON array of the question objects, no other text.',
+  ].join('\n');
+
+  var qs = aiTypedQuestions(aiRawArray([], prompt, 0.5));
+  if (!qs.length) throw new Error('The AI did not return usable questions — try again or simplify the topic.');
+  return { questions: qs.slice(0, 30), model: GEMINI_MODEL, requested: total };
 }
 
 /**
@@ -2503,6 +2590,7 @@ function routePost(action, b) {
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
     case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime, b.files);
     case 'quizFromNotes':   requireRole(b.token, WRITERS); return quizFromNotes(b.file, b.mime, b.files, b.count);
+    case 'generateBloomQuiz': requireRole(b.token, WRITERS); return generateBloomQuiz(b);
     case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students

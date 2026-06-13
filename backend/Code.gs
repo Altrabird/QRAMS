@@ -140,6 +140,7 @@ function routePost(action, b) {
     case 'saveQuiz':        requireRole(b.token, WRITERS); return saveQuiz(b.taskId, b.questions);
     case 'extractQuiz':     requireRole(b.token, WRITERS); return extractQuiz(b.file, b.mime, b.files);
     case 'quizFromNotes':   requireRole(b.token, WRITERS); return quizFromNotes(b.file, b.mime, b.files, b.count);
+    case 'generateBloomQuiz': requireRole(b.token, WRITERS); return generateBloomQuiz(b);
     case 'saveGeminiKey':   requireRole(b.token, ['admin']); return saveGeminiKey(b.key);
 
     // Students

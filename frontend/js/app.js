@@ -325,6 +325,7 @@ async function taskModal(taskId) {
             <button type="button" class="btn btn-sm btn-outline-success" id="qbUploadBtn" title="Upload photos or a PDF of the exam paper"><i class="bi bi-image me-1"></i>Upload</button>
           </div>
           <button type="button" class="btn btn-sm btn-outline-info" id="qbNotesBtn" title="Snap or upload study notes — the AI writes new questions from them"><i class="bi bi-journal-text me-1"></i>From notes</button>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="qbGenToggle" title="Generate a quiz with AI across Bloom's Taxonomy levels"><i class="bi bi-magic me-1"></i>Generate AI</button>
           <button type="button" class="btn btn-sm btn-outline-secondary" id="qbAiBtn"><i class="bi bi-stars me-1"></i>Paste from AI</button>
           <button type="button" class="btn btn-sm btn-primary" id="qbAddBtn"><i class="bi bi-plus-lg me-1"></i>Add question</button>
           <input type="file" id="qbFile" accept="image/*,application/pdf" multiple class="d-none">
@@ -340,6 +341,23 @@ async function taskModal(taskId) {
             <button type="button" class="btn btn-sm btn-success" id="qbNotesSnapBtn"><i class="bi bi-camera me-1"></i>Snap notes</button>
             <button type="button" class="btn btn-sm btn-outline-success" id="qbNotesUpBtn"><i class="bi bi-image me-1"></i>Upload notes</button>
           </div>
+        </div>
+        <div id="qbGenArea" class="border rounded p-2 mb-3 d-none">
+          <p class="small text-secondary mb-2"><i class="bi bi-magic me-1"></i><b>Generate with AI</b> — give a topic and a difficulty mix; QRAMS writes questions across Bloom's Taxonomy levels (matching, fill-blanks, ordering, multiple choice). Always review &amp; edit before saving.</p>
+          <div class="row g-2 mb-2">
+            <div class="col-md-6"><input class="form-control form-control-sm" id="qbGenTopic" placeholder="Topic, e.g. Kitaran air / Photosynthesis"></div>
+            <div class="col-md-3"><input class="form-control form-control-sm" id="qbGenYear" placeholder="Level (e.g. Tahun 4)"></div>
+            <div class="col-md-3"><select class="form-select form-select-sm" id="qbGenLang"><option value="Bahasa Melayu">Bahasa Melayu</option><option value="English">English</option></select></div>
+          </div>
+          <div class="d-flex gap-1 mb-2 flex-wrap align-items-center">
+            <span class="small fw-semibold me-1">Preset:</span>
+            <button type="button" class="btn btn-sm btn-outline-success" onclick="qbGenPreset('asas')">🟢 Asas</button>
+            <button type="button" class="btn btn-sm btn-outline-warning" onclick="qbGenPreset('seimbang')">🟡 Seimbang</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="qbGenPreset('kbat')">🔴 KBAT</button>
+            <span class="small text-secondary ms-auto">Total: <b id="qbGenTotal">0</b></span>
+          </div>
+          <div class="row g-1 mb-2" id="qbGenLadder"></div>
+          <button type="button" class="btn btn-sm btn-primary" id="qbGenBtn"><i class="bi bi-magic me-1"></i>Generate quiz</button>
         </div>
         <div class="d-none border rounded p-2 mb-2" id="qbAiArea">
           <p class="small text-secondary mb-1">1) Copy the prompt → 2) paste into Gemini / ChatGPT / Claude → 3) paste the AI's reply below → 4) Parse.
@@ -405,6 +423,8 @@ async function taskModal(taskId) {
   UI.el('qbAddBtn').onclick = () => { _quizDraft.push(emptyQuestion()); qbRender(); };
   UI.el('qbAiBtn').onclick = () => UI.el('qbAiArea').classList.toggle('d-none');
   UI.el('qbParseBtn').onclick = qbParseAI;
+  UI.el('qbGenToggle').onclick = () => { UI.el('qbGenArea').classList.toggle('d-none'); qbGenRenderLadder(); };
+  UI.el('qbGenBtn').onclick = qbGenerate;
   // The same two hidden file inputs serve BOTH AI imports; _qbSource decides
   // whether the picked file(s) go to exam-extraction or notes-generation.
   let _qbSource = 'exam';
@@ -451,6 +471,13 @@ let _quizDraft = [];
 const QB_LETTERS = ['A', 'B', 'C', 'D'];
 const QB_TYPES = { mcq: 'Multiple choice', match: 'Matching', fill: 'Fill blanks', order: 'Arrange order' };
 const QB_BLOOMS = ['Remember', 'Understand', 'Apply', 'Analyze', 'Evaluate', 'Create'];
+const QB_BLOOM_COLORS = { Remember: '#0ea5e9', Understand: '#10b981', Apply: '#f59e0b', Analyze: '#fb923c', Evaluate: '#ec4899', Create: '#8b5cf6' };
+const QB_PRESETS = {
+  asas:     { Remember: 3, Understand: 2, Apply: 1, Analyze: 0, Evaluate: 0, Create: 0 }, // weaker groups
+  seimbang: { Remember: 2, Understand: 2, Apply: 2, Analyze: 1, Evaluate: 1, Create: 0 }, // a balanced pyramid
+  kbat:     { Remember: 1, Understand: 1, Apply: 1, Analyze: 2, Evaluate: 2, Create: 1 }, // HOTS-weighted
+};
+let _qbLadder = Object.assign({}, QB_PRESETS.seimbang);
 const QB_AI_PROMPT = 'If a file (exam paper) is attached, extract its multiple-choice questions and work out the correct answers; otherwise write 5 multiple-choice questions on [TOPIC] for [YEAR/LEVEL] pupils in [LANGUAGE]. Keep each question short and clear. Output ONLY a JSON array in exactly this format, with no other text: [{"q":"question text","options":["first option","second option","third option","fourth option"],"correct":1}] — "correct" is the position of the right option, counting from 1.';
 
 function emptyQuestion(type) {
@@ -596,6 +623,54 @@ function qbCollect() {
     }
   });
   return out;
+}
+
+/* ---- Bloom-ladder AI generator (Phase B) ---- */
+function qbGenPreset(name) { _qbLadder = Object.assign({}, QB_PRESETS[name] || QB_PRESETS.seimbang); qbGenRenderLadder(); }
+function qbGenSet(lv, v) { _qbLadder[lv] = Math.max(0, Math.min(15, Number(v) || 0)); qbGenTotalUpdate(); }
+function qbGenTotalUpdate() {
+  const t = QB_BLOOMS.reduce((s, lv) => s + (_qbLadder[lv] || 0), 0);
+  const el = UI.el('qbGenTotal'); if (el) el.textContent = t;
+}
+function qbGenRenderLadder() {
+  const box = UI.el('qbGenLadder'); if (!box) return;
+  box.innerHTML = QB_BLOOMS.map(lv => `
+    <div class="col-6 col-md-4">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text" style="border-left:5px solid ${QB_BLOOM_COLORS[lv]};min-width:108px">${lv}</span>
+        <input type="number" class="form-control" min="0" max="15" value="${_qbLadder[lv] || 0}" oninput="qbGenSet('${lv}', this.value)">
+      </div>
+    </div>`).join('');
+  qbGenTotalUpdate();
+}
+async function qbGenerate() {
+  const topic = (UI.el('qbGenTopic').value || '').trim();
+  if (!topic) return UI.toast('Enter a topic first.', 'warning');
+  const ladder = {};
+  QB_BLOOMS.forEach(lv => { if (_qbLadder[lv] > 0) ladder[lv] = _qbLadder[lv]; });
+  const total = Object.values(ladder).reduce((s, n) => s + n, 0);
+  if (!total) return UI.toast('Choose at least one question (try a preset).', 'warning');
+  if (total > 30) return UI.toast('Keep the total to 30 or fewer.', 'warning');
+  const btn = UI.el('qbGenBtn'); btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
+  try {
+    const r = await Api.generateBloomQuiz({
+      topic, year: (UI.el('qbGenYear').value || '').trim(), language: UI.el('qbGenLang').value, ladder,
+    });
+    const parsed = (r.questions || []).map(q => qbNormalise({
+      type: q.type, bloom: q.bloom, q: q.question,
+      options: q.options || [], correct: q.correct || 'A',
+      pairs: q.pairs || [],
+      blanks: (q.answers || []).map(a => (Array.isArray(a) ? a : [a]).join(', ')),
+      items: q.items || [],
+    }));
+    if (!parsed.length) return UI.toast('No usable questions came back — try again.', 'warning');
+    const blank = _quizDraft.length === 1 && !_quizDraft[0].q && !_quizDraft[0].options.join('');
+    _quizDraft = blank ? parsed : _quizDraft.concat(parsed);
+    qbRender();
+    UI.toast(`Generated ${parsed.length} question(s) across Bloom levels — review & edit before saving!`, 'warning');
+  } catch (err) { UI.toast(err.message, 'danger'); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic me-1"></i>Generate quiz'; }
 }
 
 /** Parse an AI reply (JSON preferred, simple "Q:/A)" text as fallback). */
